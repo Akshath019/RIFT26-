@@ -1,0 +1,55 @@
+# GenMark — Docker Compose (Local Development)
+# ==============================================
+# Starts both backend and frontend locally using Docker.
+# The smart contract is NOT here — it runs on Algorand TestNet (already deployed).
+#
+# Usage:
+#   docker compose up --build          # Build images and start both services
+#   docker compose up --build backend  # Start backend only
+#   docker compose down                # Stop everything
+#   docker compose logs -f backend     # Follow backend logs
+#
+# Before running:
+#   1. Make sure projects/backend/.env exists with ALGORAND_APP_ID set
+#   2. Make sure projects/contracts are deployed (algokit project deploy testnet)
+
+version: "3.9"
+
+services:
+
+  # ── FastAPI Backend ───────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./projects/backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./projects/backend/.env      # Loads ALGORAND_APP_ID, DEPLOYER_MNEMONIC, etc.
+    environment:
+      - PORT=8000
+      - FRONTEND_URL=http://localhost:5173
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── React Frontend ────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./projects/frontend
+      dockerfile: Dockerfile
+      args:
+        # At build time, Vite bakes this URL into the JS bundle.
+        # localhost:8000 works when you open the frontend in your browser
+        # (browser talks directly to backend, not through Docker networking).
+        VITE_BACKEND_URL: "http://localhost:8000"
+    ports:
+      - "5173:80"                    # Access at http://localhost:5173
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

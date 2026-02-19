@@ -327,10 +327,133 @@ get_flag(string,uint64)string
 
 ---
 
+## What is App ID?
+
+Think of it like a **phone number for the smart contract**.
+
+- You write `contract.py` → deploy it → Algorand assigns a permanent number e.g. `755794932`
+- The backend uses `ALGORAND_APP_ID=755794932` to know WHICH contract to call
+- Without it → backend crashes with "ALGORAND_APP_ID not set"
+- The contract itself lives on-chain forever after deploy — it never goes down
+
+---
+
+## Full Online Deployment Plan
+
+### Phase 1 — Deploy Smart Contract (get App ID)
+
+```bash
+# Fix .env.testnet — mnemonic must be on ONE line, no line breaks
+# Then:
+cd projects/contracts
+algokit project deploy testnet
+# Output: "Deployed app GenMark, App ID: <NUMBER>"
+# Copy that number → put in projects/backend/.env as ALGORAND_APP_ID=<NUMBER>
+```
+
+### Phase 2 — Deploy Backend Online (Railway + Docker — Free)
+
+Railway detects your Dockerfile automatically and builds + runs it.
+
+1. Go to `railway.app` → Sign up with GitHub
+2. New Project → Deploy from GitHub repo → select your repo
+3. Railway asks which folder → set **Root Directory: `projects/backend`**
+4. Railway detects `Dockerfile` automatically — no extra config needed
+5. Go to **Variables** tab → add every variable below (copy-paste exact names):
+
+   | Variable | Value |
+   |----------|-------|
+   | `ALGORAND_ALGOD_SERVER` | `https://testnet-api.algonode.cloud` |
+   | `ALGORAND_ALGOD_TOKEN` | `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` |
+   | `ALGORAND_APP_ID` | `<your App ID from Phase 1>` |
+   | `DEPLOYER_MNEMONIC` | `<your 25-word mnemonic — all on one line>` |
+   | `FRONTEND_URL` | `https://your-vercel-url.vercel.app` (fill after Phase 3) |
+
+6. Railway builds the Docker image and starts it → you get a URL like:
+   `https://genmark-backend-production.up.railway.app`
+7. Test it: open `https://genmark-backend-production.up.railway.app/health` in browser
+   → should show `{"status":"healthy","app_id_configured":true}`
+
+### Phase 3 — Deploy Frontend Online (Railway + Docker OR Vercel — Free)
+
+**Option A: Vercel (simpler — recommended for frontend)**
+1. Go to `vercel.com` → Sign up with GitHub → Add New Project → import your repo
+2. Configure:
+   - Root Directory: `projects/frontend`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+3. Add Environment Variable: `VITE_BACKEND_URL` = `https://genmark-backend.railway.app`
+4. Deploy → get URL like `https://genmark.vercel.app`
+
+**Option B: Railway + Docker (same platform as backend)**
+1. On Railway → New Service in same project → GitHub repo
+2. Root Directory: `projects/frontend`
+3. Railway detects `Dockerfile` automatically
+4. Variables → add: `VITE_BACKEND_URL` = `https://genmark-backend.railway.app`
+   ⚠ This is a BUILD ARG — Railway will pass it during image build (Vite bakes it in)
+5. Deploy → get URL like `https://genmark-frontend.railway.app`
+
+### Phase 4 — Connect and Verify
+
+1. Back in Railway backend service → Variables → update:
+   `FRONTEND_URL` = `https://genmark.vercel.app` (or your Railway frontend URL)
+2. Redeploy backend
+3. Open your frontend URL → Generate → type prompt → Create Image
+   → green "Content Certified ✓" badge = blockchain working
+4. Save image → Verify → Upload → green "Verified Original" card
+
+### Cost
+
+| Service | Cost |
+|---------|------|
+| Algorand TestNet | Free (fake ALGO) |
+| Railway (backend Docker) | Free: $5 credit/month — enough for hackathon |
+| Vercel (frontend) | Free forever |
+| AlgoNode (blockchain API) | Free forever |
+
+**Total: $0**
+
+---
+
+## Docker Files (created)
+
+| File | Purpose |
+|------|---------|
+| `projects/backend/Dockerfile` | Python 3.12 + FastAPI + Pillow deps |
+| `projects/backend/.dockerignore` | Excludes venv, .env, __pycache__ |
+| `projects/frontend/Dockerfile` | Multi-stage: Node 20 build → nginx serve |
+| `projects/frontend/.dockerignore` | Excludes node_modules, dist, .env |
+| `projects/frontend/nginx.conf` | nginx config with React Router support |
+| `docker-compose.yml` | Local development — runs both services |
+
+## Local Docker Development
+
+```bash
+# From project root — builds and starts both backend + frontend
+docker compose up --build
+
+# Then open:
+#   Frontend: http://localhost:5173
+#   Backend:  http://localhost:8000
+#   API docs: http://localhost:8000/docs
+
+# Stop everything
+docker compose down
+```
+
+⚠ Before running locally: `projects/backend/.env` must exist with `ALGORAND_APP_ID` set.
+
+---
+
 ## Remaining TODO
 
-1. Set `ALGORAND_APP_ID=<number>` in `projects/backend/.env` after deploy
-2. Test full register → verify flow end-to-end
+1. Deploy smart contract: `algokit project deploy testnet` → copy App ID
+2. Set `ALGORAND_APP_ID=<number>` in `projects/backend/.env`
+3. Push Docker files to GitHub: `git add . && git commit -m "add Docker" && git push`
+4. Deploy backend on Railway (uses `projects/backend/Dockerfile`)
+5. Deploy frontend on Vercel or Railway (uses `projects/frontend/Dockerfile`)
+6. Update `FRONTEND_URL` in Railway backend vars → redeploy
+7. Test full register → verify flow end-to-end
 
 ---
 
