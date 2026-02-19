@@ -14,6 +14,18 @@ even if the image was cropped, compressed, or resized.
 
 ---
 
+## Current State (2026-02-19)
+
+- Frontend: RUNNING at localhost:5173
+- Backend: RUNNING at localhost:8000
+- Contract: COMPILED (GenMark.arc56.json generated)
+- Contract: NOT YET DEPLOYED (one Puya error left in flag_misuse, then deploy)
+- Deployer account: FUNDED with 10 TestNet ALGO
+- Image generation: WORKING (Pollinations AI, free, no API key)
+- App ID: NOT YET SET (backend .env has ALGORAND_APP_ID=0)
+
+---
+
 ## Key Commands
 
 ### Frontend (run from `projects/frontend/`)
@@ -21,8 +33,6 @@ even if the image was cropped, compressed, or resized.
 npm install                    # Install dependencies (first time)
 npm run dev                    # Start dev server at http://localhost:5173
 npm run build                  # Production build
-npm run lint                   # Lint check
-npm run lint:fix               # Auto-fix lint issues
 ```
 
 ### Backend (run from `projects/backend/`)
@@ -34,16 +44,14 @@ uvicorn main:app --reload --port 8000 # Dev server at http://localhost:8000
 
 ### Smart Contracts (run from `projects/contracts/`)
 ```bash
-algokit project run build      # Compile GenMark contract with Puya
-algokit project deploy testnet # Deploy to TestNet (prints App ID)
-algokit localnet start         # Start local Algorand node (Docker required)
-algokit localnet stop          # Stop local node
-pytest tests/genmark_test.py -v # Run contract tests
+poetry run python -m smart_contracts build    # Compile (also: algokit project run build)
+algokit project deploy testnet                # Deploy to TestNet (prints App ID)
 ```
 
-### Workspace-level (run from root)
+### Algorand Account Management
 ```bash
-algokit project bootstrap all  # Install all dependencies (Python + Node)
+algokit dispenser login                        # Auth (opens browser, sign in with GitHub)
+algokit dispenser fund --receiver <ADDRESS> --amount 10000000  # Send 10 ALGO
 ```
 
 ---
@@ -65,7 +73,7 @@ class ContentRecord(arc4.Struct):
 class GenMark(ARC4Contract):
     total_registrations: UInt64
     # BoxMap: pHash → ContentRecord (namespace "reg_")
-    # Flag boxes: "flg_" + phash.bytes + itob(flag_index)
+    # Flag boxes: "flg_" + phash.bytes + itob(flag_index) via op.Box.put()
 ```
 
 **ABI Methods:**
@@ -82,7 +90,97 @@ FastAPI service — the **ONLY** component that touches the blockchain.
 - `algorand.py` — `algosdk` AtomicTransactionComposer ABI calls
 - `certificate.py` — `reportlab` PDF forensic certificate generation
 
-**ABI method signatures (used in algorand.py):**
+### Frontend (`projects/frontend/src/`)
+React + TailwindCSS. **Zero blockchain code** — all Algorand calls go through the backend.
+
+- `App.tsx` — React Router v7 with two routes
+- `pages/Generate.tsx` — AI image generation + silent registration
+- `pages/Verify.tsx` — public verification portal
+- `components/DropZone.tsx` — drag-and-drop image upload
+- `components/ResultCard.tsx` — Verified/Not Found card + misuse modal
+- `components/StampBadge.tsx` — "Content Certified ✓" overlay badge
+
+### Image Generation
+Uses **Pollinations AI** — completely free, no API key needed:
+```
+https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true&seed=42
+```
+Fixed seed=42 ensures same prompt → same image → same pHash (deterministic).
+
+---
+
+## Environment Files
+
+### Backend (`projects/backend/.env`) — CREATED, needs App ID update:
+```
+ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
+ALGORAND_ALGOD_TOKEN=aaaa...aaaa (64 a's — AlgoNode accepts any token)
+ALGORAND_APP_ID=0                 ← UPDATE after deploy
+DEPLOYER_MNEMONIC=birth heart ... medal (25 words)
+FRONTEND_URL=http://localhost:5173
+```
+
+### Frontend (`projects/frontend/.env`) — CREATED:
+```
+VITE_BACKEND_URL=http://localhost:8000
+```
+
+### Contracts (`projects/contracts/.env.testnet`) — CREATED, needs DISPENSER_MNEMONIC:
+```
+ALGOD_SERVER=https://testnet-api.algonode.cloud
+DEPLOYER_MNEMONIC=birth heart ... medal
+DISPENSER_MNEMONIC=birth heart ... medal  ← same mnemonic for TestNet
+```
+
+---
+
+## Puya Compiler Rules (CRITICAL — learned from build errors)
+
+These are Puya-specific constraints that differ from standard Python:
+
+1. **No `_` variable name** — use a real name or index access
+2. **No tuple unpacking for ARC-4 mutable refs** — `BoxMap.maybe()` returns a tuple with an ARC-4 ref; you CANNOT unpack or assign it to a variable
+3. **Use `key in boxmap`** — for existence checks instead of `.maybe()[1]`
+4. **Use `boxmap[key]` directly** — for reading fields: `self.registry[phash].flag_count`
+5. **Use `boxmap[key].field = value`** — for in-place field updates
+6. **Always `.copy()` ARC-4 values** — when returning: `self.registry[phash].copy()`
+7. **`op.Box.put()` not `op.box_put()`** — box opcodes are under the `op.Box` class
+8. **`op.Box.get()` not `op.box_get()`** — returns `tuple[Bytes, bool]`
+
+### Correct Puya Patterns for BoxMap with ARC-4 Structs
+
+```python
+# CHECK EXISTENCE:
+assert phash in self.registry, "Not found"
+# or:
+if phash not in self.registry:
+    return arc4.Bool(False), empty_record
+
+# READ FULL RECORD (returns a copy):
+record = self.registry[phash].copy()
+
+# READ ONE FIELD:
+count = self.registry[phash].flag_count.native
+
+# UPDATE ONE FIELD IN-PLACE:
+self.registry[phash].flag_count = arc4.UInt64(new_value)
+
+# WRITE NEW RECORD:
+self.registry[phash] = ContentRecord(
+    creator_name=creator_name,
+    creator_address=arc4.Address(Txn.sender),
+    ...
+)
+
+# RAW BOX OPERATIONS (for non-BoxMap boxes like flags):
+op.Box.put(key_bytes, value_bytes)
+data, exists = op.Box.get(key_bytes)
+```
+
+---
+
+## ABI Method Signatures (for algosdk in backend)
+
 ```
 register_content(string,string,string,pay)uint64
 verify_content(string)(bool,(string,address,string,uint64,uint64,uint64))
@@ -90,74 +188,23 @@ flag_misuse(string,string,pay)uint64
 get_flag(string,uint64)string
 ```
 
-### Frontend (`projects/frontend/src/`)
-React + TailwindCSS. **Zero blockchain code** — all Algorand calls go through the backend.
+---
 
-- `App.tsx` — React Router v7 with two routes
-- `pages/Generate.tsx` — mock AI generation + silent registration
-- `pages/Verify.tsx` — public verification portal
-- `components/DropZone.tsx` — drag-and-drop image upload
-- `components/ResultCard.tsx` — Verified/Not Found card + misuse modal
-- `components/StampBadge.tsx` — "Content Certified ✓" overlay badge
+## Deployer Account
+
+- **Address:** K3SFBBGKSEWGDW3Q4KAPKTI33ING3HLND5YSJVJH467MHA5K72FKCTXRDQ
+- **Balance:** 10.0 TestNet ALGO
+- **Network:** Algorand TestNet via AlgoNode
 
 ---
 
-## Environment Setup
+## Remaining TODO
 
-### Backend (`projects/backend/.env`):
-```
-ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
-ALGORAND_ALGOD_TOKEN=aaaa...aaaa
-ALGORAND_APP_ID=<from deploy>
-DEPLOYER_MNEMONIC=<25 words>
-FRONTEND_URL=https://your-app.vercel.app
-```
-
-### Frontend (`projects/frontend/.env`):
-```
-VITE_BACKEND_URL=http://localhost:8000
-```
-
----
-
-## Important Patterns
-
-### Contract Deployment Flow
-1. `algokit project run build` — compiles to TEAL + generates Python client
-2. `algokit generate account` — creates deployer account
-3. Fund on TestNet faucet: https://bank.testnet.algorand.network/
-4. `algokit project deploy testnet` — deploys + funds app with 10 ALGO
-5. Copy printed App ID to `backend/.env`
-
-### Backend Blockchain Call Pattern
-```python
-# Read-only (free, no state change):
-simulate_result = atc.simulate(algod_client)
-
-# Write (requires fees + payment):
-sp.flat_fee = True
-sp.fee = 2 * 1000  # 2x for outer + inner transaction
-result = atc.execute(algod_client, wait_rounds=4)
-```
-
-### Frontend API Call Pattern
-```typescript
-const response = await fetch(`${VITE_BACKEND_URL}/api/register`, {
-  method: 'POST',
-  body: formData,  // multipart with image + creator_name + platform
-})
-```
-
-### Image Generation (Pollinations AI)
-```typescript
-const url = `https://image.pollinations.ai/prompt/${encoded}?width=512&height=512&nologo=true&seed=42`
-// Fixed seed ensures same prompt → same image → same pHash
-```
-
----
-
-## Deployed Contract IDs (TestNet)
-- **GenMark**: App ID `TBD — deploy and fill in`
+1. Fix `flag_misuse` method in contract.py (replace `.maybe()` with `in` + direct access)
+2. Add `DISPENSER_MNEMONIC` to `projects/contracts/.env.testnet`
+3. Run `algokit project deploy testnet` → get App ID
+4. Set `ALGORAND_APP_ID=<number>` in `projects/backend/.env`
+5. Restart backend → test full flow
 
 ---
 
@@ -172,37 +219,31 @@ const url = `https://image.pollinations.ai/prompt/${encoded}?width=512&height=51
 | pHash logic | `projects/backend/hashing.py` |
 | Algorand calls | `projects/backend/algorand.py` |
 | PDF certificates | `projects/backend/certificate.py` |
+| Backend env | `projects/backend/.env` |
 | Backend env template | `projects/backend/.env.example` |
+| Contracts env | `projects/contracts/.env.testnet` |
 | Generate page | `projects/frontend/src/pages/Generate.tsx` |
 | Verify page | `projects/frontend/src/pages/Verify.tsx` |
 | DropZone component | `projects/frontend/src/components/DropZone.tsx` |
 | ResultCard component | `projects/frontend/src/components/ResultCard.tsx` |
 | StampBadge component | `projects/frontend/src/components/StampBadge.tsx` |
 | Frontend routing | `projects/frontend/src/App.tsx` |
-| Frontend env template | `projects/frontend/.env.template` |
+| Frontend env | `projects/frontend/.env` |
 | Vercel config | `projects/frontend/vercel.json` |
+| Full plan | `plan.md` |
 
 ---
 
-## Common Gotchas
+## Documentation Resources
 
-- **pHash vs SHA-256**: Always use perceptual hash (imagehash) not SHA-256. Real images get re-saved.
-- **Box MBR**: Registration requires 0.1 ALGO payment to cover box storage costs.
-- **Inner transaction fee**: Outer `register_content` call needs `fee = 2 * min_fee` for ASA creation inner txn.
-- **simulate() vs execute()**: Use `atc.simulate()` for read-only methods (free); `atc.execute()` for writes.
-- **Box key namespacing**: Registry = `b"reg_"`, Flags = `b"flg_"` — keeps box keys distinct.
-- **Soulbound ASA**: total=1, decimals=0, default_frozen=True, all roles=contract.
-- **No blockchain in frontend**: Frontend NEVER calls Algorand directly — only via backend.
-- **React Router rewrite**: `vercel.json` rewrites all routes to `index.html` for SPA routing.
-- **Demo mode**: Frontend gracefully shows demo states when backend is unavailable (503 errors).
-- **Fixed seed**: Pollinations AI uses `seed=42` for reproducible images (same prompt → same pHash).
-
----
-
-## ARC Standards Used
-- **ARC-4**: Smart contract ABI interface (methods, struct types, return values)
-- **ARC-4 Box Storage**: Per-content key-value storage
-- **ASA Soulbound**: total=1, decimals=0, default_frozen=True, contract-controlled
+| Resource | URL |
+|----------|-----|
+| Algorand Python (Puya) | https://algorandfoundation.github.io/puya/ |
+| algopy API reference | https://algorandfoundation.github.io/puya/api.html |
+| AlgoKit CLI | https://github.com/algorandfoundation/algokit-cli |
+| algosdk Python SDK | https://py-algorand-sdk.readthedocs.io/ |
+| ARC-4 spec | https://arc.algorand.foundation/ARCs/arc-0004 |
+| Box Storage guide | https://developer.algorand.org/docs/get-details/dapps/smart-contracts/apps/state/#box-storage |
 
 ## Current Date
 Today: 2026-02-19

@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 # Set trace_all to True to capture all transactions, defaults to capturing traces only on failure
 # Learn more about using AlgoKit AVM Debugger to debug your TEAL source codes and inspect various kinds of
 # Algorand transactions in atomic groups -> https://github.com/algorandfoundation/algokit-avm-vscode-debugger
-config.configure(debug=True, trace_all=False)
+config.configure(debug=False, trace_all=False)
 
 # Set up logging and load environment variables.
 logging.basicConfig(

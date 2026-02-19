@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def deploy() -> None:
     """Deploy or update the GenMark contract on the configured network."""
-    from smart_contracts.artifacts.genmark.genmark_client import GenMarkFactory
+    from smart_contracts.artifacts.genmark.gen_mark_client import GenMarkFactory
 
     algorand = algokit_utils.AlgorandClient.from_environment()
     deployer_ = algorand.account.from_environment("DEPLOYER")

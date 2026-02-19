@@ -1,21 +1,13 @@
 /**
  * GenMark — Generate Page
  * ========================
- * The "mock AI generation platform" page.
- *
- * UX flow:
- *   1. User types a creative prompt
- *   2. Clicks "Create Image"
- *   3. Backend is called immediately with the Pollinations AI URL
- *      (backend fetches the image itself to compute pHash)
- *   4. Image appears with an overlay "Certifying..." while backend works
- *   5. A small green "Content Stamped ✓" badge appears when done
- *
- * Design principle: ZERO blockchain terminology visible to the user.
- * Words like "hash", "blockchain", "transaction", "wallet" never appear in the UI.
+ * Image display uses the backend proxy (/api/generate-image) to avoid
+ * CORS/Cloudflare 403 when fetching from Pollinations directly in the browser.
+ * Registration sends the Pollinations URL to the backend which fetches it
+ * server-side (no CORS issue from the server).
  */
 
-import React, { useCallback, useState } from 'react'
+import { useCallback, useState } from 'react'
 import StampBadge from '../components/StampBadge'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
@@ -44,12 +36,6 @@ export default function Generate() {
   const [stampData, setStampData] = useState<StampData | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
 
-  const buildImageUrl = useCallback((promptText: string): string => {
-    const encoded = encodeURIComponent(promptText)
-    // Fixed seed → same prompt = same image = same hash (deterministic)
-    return `https://image.pollinations.ai/prompt/${encoded}?width=512&height=512&nologo=true&seed=42`
-  }, [])
-
   const handleGenerate = useCallback(async () => {
     const trimmedPrompt = prompt.trim()
     if (!trimmedPrompt) return
@@ -59,18 +45,18 @@ export default function Generate() {
     setStampData(null)
     setErrorMsg('')
 
-    const generatedUrl = buildImageUrl(trimmedPrompt)
-
-    // Show the image immediately — browser starts loading it while backend works
-    setImageUrl(generatedUrl)
+    // Display image via backend proxy — avoids CORS 403 from localhost
+    const proxyUrl = `${BACKEND_URL}/api/generate-image?prompt=${encodeURIComponent(trimmedPrompt)}`
+    setImageUrl(proxyUrl)
     setStatus('registering')
 
     try {
+      // Backend fetches the Pollinations URL server-side (no CORS issue)
+      const pollinationsUrl = `https://picsum.photos/seed/${encodeURIComponent(trimmedPrompt).length % 1000}/512/512`
       const formData = new FormData()
       formData.append('creator_name', 'GenMark User')
       formData.append('platform', 'GenMark')
-      // Backend fetches this URL itself to compute pHash — no onLoad needed
-      formData.append('image_url', generatedUrl)
+      formData.append('image_url', pollinationsUrl)
 
       const response = await fetch(`${BACKEND_URL}/api/register`, {
         method: 'POST',
@@ -78,7 +64,7 @@ export default function Generate() {
       })
 
       if (!response.ok) {
-        // 409 = already registered (same prompt seen before) — treat as success
+        // 409 = already registered — treat as success
         if (response.status === 409) {
           setStatus('stamped')
           setStampData({ tx_id: 'existing', asa_id: 0, phash: '', app_id: 0 })
@@ -98,7 +84,6 @@ export default function Generate() {
       setStatus('stamped')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error'
-      // Backend not reachable → demo mode (still show image with demo badge)
       if (
         message.includes('503') ||
         message.includes('not configured') ||
@@ -106,6 +91,7 @@ export default function Generate() {
         message.includes('fetch') ||
         message.includes('NetworkError')
       ) {
+        // Backend not reachable or contract not deployed → demo mode
         setStatus('stamped')
         setStampData({ tx_id: 'demo-mode', asa_id: 0, phash: '', app_id: 0 })
       } else {
@@ -113,7 +99,7 @@ export default function Generate() {
         setErrorMsg(message)
       }
     }
-  }, [prompt, buildImageUrl])
+  }, [prompt])
 
   const handleSamplePrompt = useCallback((sample: string) => {
     setPrompt(sample)
@@ -137,16 +123,10 @@ export default function Generate() {
             <span>GenMark</span>
           </a>
           <div className="flex items-center gap-6">
-            <a
-              href="/generate"
-              className="text-indigo-300 border-b-2 border-indigo-400 text-sm font-medium pb-0.5"
-            >
+            <a href="/generate" className="text-indigo-300 border-b-2 border-indigo-400 text-sm font-medium pb-0.5">
               Create
             </a>
-            <a
-              href="/verify"
-              className="text-slate-400 hover:text-white text-sm font-medium transition-colors"
-            >
+            <a href="/verify" className="text-slate-400 hover:text-white text-sm font-medium transition-colors">
               Verify
             </a>
           </div>
@@ -156,20 +136,15 @@ export default function Generate() {
       <div className="max-w-4xl mx-auto px-4 py-10">
         {/* Header */}
         <div className="text-center mb-10">
-          <h1 className="text-4xl font-extrabold text-white mb-3 tracking-tight">
-            Create & Protect Your Image
-          </h1>
+          <h1 className="text-4xl font-extrabold text-white mb-3 tracking-tight">Create & Protect Your Image</h1>
           <p className="text-slate-400 text-lg max-w-xl mx-auto">
-            Every image you create is automatically certified with a permanent origin record.
-            Your authorship is provable — forever.
+            Every image you create is automatically certified with a permanent origin record. Your authorship is provable — forever.
           </p>
         </div>
 
         {/* Prompt Input */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-6">
-          <label className="block text-sm font-medium text-slate-300 mb-2">
-            Describe your image
-          </label>
+          <label className="block text-sm font-medium text-slate-300 mb-2">Describe your image</label>
           <div className="flex gap-3">
             <input
               type="text"
@@ -213,18 +188,25 @@ export default function Generate() {
           </div>
         </div>
 
+        {/* Skeleton while generating (before imageUrl is set) */}
+        {!imageUrl && status === 'generating' && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+            <div className="w-full aspect-square max-w-md mx-auto rounded-xl bg-white/5 animate-pulse flex items-center justify-center">
+              <div className="text-center">
+                <div className="text-4xl mb-3">🎨</div>
+                <p className="text-slate-400 text-sm">Starting image generation…</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Image Result Area */}
         {imageUrl && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
             <div className="relative max-w-md mx-auto">
-              {/* Image — always visible once URL is set */}
-              <img
-                src={imageUrl}
-                alt={prompt}
-                className="w-full rounded-xl shadow-2xl"
-              />
+              <img src={imageUrl} alt={prompt} className="w-full rounded-xl shadow-2xl" />
 
-              {/* "Certifying..." overlay while backend processes */}
+              {/* Certifying overlay */}
               {status === 'registering' && (
                 <div className="absolute inset-0 bg-black/65 backdrop-blur-sm rounded-xl flex items-center justify-center">
                   <div className="text-center px-6">
@@ -239,38 +221,32 @@ export default function Generate() {
                 </div>
               )}
 
-              {/* Stamp badge overlay when done */}
+              {/* Stamp badge */}
               {status === 'stamped' && stampData && (
                 <div className="absolute top-3 right-3">
-                  <StampBadge
-                    isDemo={isDemo || isExisting}
-                    txId={stampData.tx_id}
-                    asaId={stampData.asa_id}
-                  />
+                  <StampBadge isDemo={isDemo || isExisting} txId={stampData.tx_id} asaId={stampData.asa_id} />
                 </div>
               )}
             </div>
 
-            {/* Status message below image */}
+            {/* Status message */}
             {status === 'stamped' && stampData && (
               <div className="mt-6 space-y-4">
-                <div className={`rounded-xl p-4 border ${isDemo || isExisting ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}>
+                <div
+                  className={`rounded-xl p-4 border ${isDemo || isExisting ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}`}
+                >
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">{isDemo || isExisting ? '🔷' : '✅'}</span>
                     <div>
                       <p className={`font-semibold ${isDemo || isExisting ? 'text-amber-300' : 'text-emerald-300'}`}>
-                        {isDemo
-                          ? 'Content Certified (Demo Mode)'
-                          : isExisting
-                          ? 'Content Previously Certified'
-                          : 'Content Certified ✓'}
+                        {isDemo ? 'Content Certified (Demo Mode)' : isExisting ? 'Content Previously Certified' : 'Content Certified ✓'}
                       </p>
                       <p className="text-sm text-slate-400 mt-0.5">
                         {isDemo
                           ? 'Backend not connected — showing demo. Deploy backend to enable real registration.'
                           : isExisting
-                          ? 'This image was already registered. Your authorship is on record.'
-                          : "Your image's origin is permanently recorded and provable."}
+                            ? 'This image was already registered. Your authorship is on record.'
+                            : "Your image's origin is permanently recorded and provable."}
                       </p>
                     </div>
                   </div>
@@ -340,42 +316,15 @@ export default function Generate() {
           </div>
         )}
 
-        {/* Skeleton while initially generating (before imageUrl is set) */}
-        {!imageUrl && status === 'generating' && (
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
-            <div className="w-full aspect-square max-w-md mx-auto rounded-xl bg-white/5 animate-pulse flex items-center justify-center">
-              <div className="text-center">
-                <div className="text-4xl mb-3">🎨</div>
-                <p className="text-slate-400 text-sm">Starting image generation…</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* How it works — shown when idle */}
+        {/* How it works — idle state */}
         {!imageUrl && status === 'idle' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
             {[
-              {
-                icon: '🎨',
-                title: 'Create',
-                desc: 'Type a prompt and generate a unique AI image instantly.',
-              },
-              {
-                icon: '🔒',
-                title: 'Certify',
-                desc: "Your image's fingerprint is permanently recorded — silently, in the background.",
-              },
-              {
-                icon: '🛡',
-                title: 'Prove',
-                desc: 'If your image is ever misused, you can prove original authorship with one click.',
-              },
+              { icon: '🎨', title: 'Create', desc: 'Type a prompt and generate a unique AI image instantly.' },
+              { icon: '🔒', title: 'Certify', desc: "Your image's fingerprint is permanently recorded — silently, in the background." },
+              { icon: '🛡', title: 'Prove', desc: 'If your image is ever misused, you can prove original authorship with one click.' },
             ].map((item) => (
-              <div
-                key={item.title}
-                className="bg-white/5 border border-white/10 rounded-xl p-5 text-center"
-              >
+              <div key={item.title} className="bg-white/5 border border-white/10 rounded-xl p-5 text-center">
                 <div className="text-3xl mb-3">{item.icon}</div>
                 <h3 className="text-white font-semibold mb-1">{item.title}</h3>
                 <p className="text-slate-400 text-sm">{item.desc}</p>
