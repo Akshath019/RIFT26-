@@ -38,7 +38,7 @@ export default function Generate() {
   }, [])
 
   const handleGenerate = useCallback(async () => {
-    const prompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)]
+    const prompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)] + ' ' + Date.now()
     setStatus('generating')
     setImageUrl(null)
     setStampData(null)
