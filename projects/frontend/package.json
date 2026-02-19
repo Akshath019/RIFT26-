@@ -1,6 +1,6 @@
 {
-  "name": "OnChain-Counter-frontend",
-  "version": "0.1.0",
+  "name": "genmark-frontend",
+  "version": "1.0.0",
   "author": {
     "name": "maroti",
     "email": "vaibhavspatre@gmail.com"
@@ -46,6 +46,7 @@
     "notistack": "^3.0.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^7.1.0",
     "tslib": "^2.6.2"
   },
   "scripts": {

@@ -1,0 +1,21 @@
+# Render.com deployment configuration for GenMark backend
+# Deploy at: https://render.com/docs/yaml-spec
+services:
+  - type: web
+    name: genmark-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: ALGORAND_ALGOD_SERVER
+        value: https://testnet-api.algonode.cloud
+      - key: ALGORAND_ALGOD_TOKEN
+        value: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      # Set these in the Render dashboard (do NOT commit secrets to this file):
+      - key: ALGORAND_APP_ID
+        sync: false
+      - key: DEPLOYER_MNEMONIC
+        sync: false
+      - key: FRONTEND_URL
+        sync: false

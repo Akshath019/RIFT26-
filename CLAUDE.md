@@ -1,12 +1,16 @@
-# CLAUDE.md — Algorand Hackathon QuickStart Template
+# CLAUDE.md — GenMark AI Content Origin Platform
 
 ## Project Overview
 
-This is a full-stack Algorand dApp template for hackathons. It is a monorepo managed by AlgoKit with:
-- **`projects/contracts/`** — Python smart contracts (Algorand Python / Puya)
-- **`projects/frontend/`** — React + TypeScript frontend
+GenMark is an AI content provenance platform built on Algorand TestNet.
+Every AI-generated image is silently registered on-chain using a perceptual hash (pHash)
+at the moment of creation. Anyone can later verify who created any image and when —
+even if the image was cropped, compressed, or resized.
 
-The contracts are compiled to TEAL and deployed on Algorand. TypeScript clients are auto-generated from ARC-56 specs and used by the frontend.
+**Monorepo structure (AlgoKit):**
+- `projects/contracts/` — Algorand Python smart contracts (Puya)
+- `projects/backend/` — FastAPI backend (pHash, blockchain calls, PDF certs)
+- `projects/frontend/` — React + TailwindCSS frontend (two pages)
 
 ---
 
@@ -14,21 +18,27 @@ The contracts are compiled to TEAL and deployed on Algorand. TypeScript clients 
 
 ### Frontend (run from `projects/frontend/`)
 ```bash
+npm install                    # Install dependencies (first time)
 npm run dev                    # Start dev server at http://localhost:5173
 npm run build                  # Production build
-npm run generate:app-clients   # Regenerate TS clients from compiled contracts
 npm run lint                   # Lint check
 npm run lint:fix               # Auto-fix lint issues
-npm run test                   # Jest unit tests
-npm run playwright:test        # E2E tests
+```
+
+### Backend (run from `projects/backend/`)
+```bash
+pip install -r requirements.txt       # Install Python dependencies
+uvicorn main:app --reload --port 8000 # Dev server at http://localhost:8000
+# API docs: http://localhost:8000/docs
 ```
 
 ### Smart Contracts (run from `projects/contracts/`)
 ```bash
-algokit project run build      # Compile all contracts
-algokit project deploy testnet # Deploy to TestNet
+algokit project run build      # Compile GenMark contract with Puya
+algokit project deploy testnet # Deploy to TestNet (prints App ID)
 algokit localnet start         # Start local Algorand node (Docker required)
 algokit localnet stop          # Stop local node
+pytest tests/genmark_test.py -v # Run contract tests
 ```
 
 ### Workspace-level (run from root)
@@ -40,133 +50,159 @@ algokit project bootstrap all  # Install all dependencies (Python + Node)
 
 ## Architecture
 
-### Smart Contracts
-- Written in **Algorand Python** (Puya compiler), located in `projects/contracts/smart_contracts/`
-- **Counter contract** (`counter/contract.py`): stateful ARC4 contract with a single `incr_counter()` method
-- **Bank contract** (`bank/contract.py`): ARC4 contract supporting `deposit()` and `withdraw()` using BoxMap for per-user balances
-- Compiled artifacts live in `smart_contracts/artifacts/` (TEAL, ARC-56 JSON, Python client, TypeScript client)
-- After modifying contracts, **always rebuild** and **regenerate clients**:
-  ```bash
-  algokit project run build
-  npm run generate:app-clients
-  ```
+### Smart Contract (`projects/contracts/smart_contracts/genmark/contract.py`)
+Written in **Algorand Python (Puya)**. Key design:
 
-### Frontend
-- **`src/App.tsx`** — Wallet provider setup and routing
-- **`src/Home.tsx`** — Landing page with feature cards
-- **`src/components/`** — Feature components (one per feature)
-- **`src/contracts/`** — Auto-generated TypeScript contract clients (do not hand-edit)
-- **`src/utils/`** — Network config helpers and Pinata IPFS utilities
+```python
+class ContentRecord(arc4.Struct):
+    creator_name:    arc4.String
+    creator_address: arc4.Address  # 32-byte on-chain address
+    platform:        arc4.String
+    timestamp:       arc4.UInt64   # Unix seconds
+    asa_id:          arc4.UInt64   # Soulbound certificate ASA
+    flag_count:      arc4.UInt64   # Misuse report count
 
-### Network Clients
-- `algodClient` — Submits transactions, reads chain state
-- `indexerClient` — Queries historical transaction data
-- Both configured via `VITE_*` environment variables; see `.env.template`
+class GenMark(ARC4Contract):
+    total_registrations: UInt64
+    # BoxMap: pHash → ContentRecord (namespace "reg_")
+    # Flag boxes: "flg_" + phash.bytes + itob(flag_index)
+```
+
+**ABI Methods:**
+- `register_content(phash, creator_name, platform, pay) → uint64` — creates box + mints ASA
+- `verify_content(phash) → (bool, ContentRecord)` — read-only lookup
+- `flag_misuse(phash, description, pay) → uint64` — immutable misuse report
+- `get_flag(phash, flag_index) → string` — read-only flag retrieval
+
+### Backend (`projects/backend/`)
+FastAPI service — the **ONLY** component that touches the blockchain.
+
+- `main.py` — endpoints: `/api/register`, `/api/verify`, `/api/flag`, `/api/certificate`
+- `hashing.py` — `imagehash.phash()` for perceptual fingerprinting
+- `algorand.py` — `algosdk` AtomicTransactionComposer ABI calls
+- `certificate.py` — `reportlab` PDF forensic certificate generation
+
+**ABI method signatures (used in algorand.py):**
+```
+register_content(string,string,string,pay)uint64
+verify_content(string)(bool,(string,address,string,uint64,uint64,uint64))
+flag_misuse(string,string,pay)uint64
+get_flag(string,uint64)string
+```
+
+### Frontend (`projects/frontend/src/`)
+React + TailwindCSS. **Zero blockchain code** — all Algorand calls go through the backend.
+
+- `App.tsx` — React Router v7 with two routes
+- `pages/Generate.tsx` — mock AI generation + silent registration
+- `pages/Verify.tsx` — public verification portal
+- `components/DropZone.tsx` — drag-and-drop image upload
+- `components/ResultCard.tsx` — Verified/Not Found card + misuse modal
+- `components/StampBadge.tsx` — "Content Certified ✓" overlay badge
 
 ---
 
 ## Environment Setup
 
-Copy `.env.template` to `.env` in `projects/frontend/` and fill in:
-
-| Variable | Purpose |
-|---|---|
-| `VITE_ALGOD_SERVER` | Algod node URL |
-| `VITE_ALGOD_NETWORK` | `localnet` / `testnet` / `mainnet` |
-| `VITE_INDEXER_SERVER` | Indexer node URL |
-| `VITE_KMD_SERVER` | KMD server (LocalNet only) |
-| `VITE_PINATA_JWT` | Pinata API JWT for IPFS uploads |
-| `VITE_PINATA_GATEWAY` | Pinata gateway URL |
-
-For TestNet (no local setup needed):
+### Backend (`projects/backend/.env`):
 ```
-VITE_ALGOD_SERVER=https://testnet-api.algonode.cloud
-VITE_ALGOD_NETWORK=testnet
-VITE_INDEXER_SERVER=https://testnet-idx.algonode.cloud
+ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
+ALGORAND_ALGOD_TOKEN=aaaa...aaaa
+ALGORAND_APP_ID=<from deploy>
+DEPLOYER_MNEMONIC=<25 words>
+FRONTEND_URL=https://your-app.vercel.app
+```
+
+### Frontend (`projects/frontend/.env`):
+```
+VITE_BACKEND_URL=http://localhost:8000
 ```
 
 ---
 
 ## Important Patterns
 
-### Adding a New Smart Contract
-1. Create `smart_contracts/<name>/contract.py` using `ARC4Contract` base class
-2. Create `smart_contracts/<name>/deploy_config.py`
-3. Register it in `smart_contracts/__main__.py`
-4. Run `algokit project run build`
-5. Run `npm run generate:app-clients` in frontend
+### Contract Deployment Flow
+1. `algokit project run build` — compiles to TEAL + generates Python client
+2. `algokit generate account` — creates deployer account
+3. Fund on TestNet faucet: https://bank.testnet.algorand.network/
+4. `algokit project deploy testnet` — deploys + funds app with 10 ALGO
+5. Copy printed App ID to `backend/.env`
 
-### Adding a New Frontend Feature
-1. Create a new component in `src/components/MyFeature.tsx`
-2. Use the `useWallet()` hook for wallet state
-3. Use `getAlgodConfigFromViteEnvironment()` and `AlgorandClient` for transactions
-4. Add a card to `Home.tsx` to expose the feature
-5. Use `notistack` (`enqueueSnackbar`) for success/error feedback
+### Backend Blockchain Call Pattern
+```python
+# Read-only (free, no state change):
+simulate_result = atc.simulate(algod_client)
 
-### Wallet Access Pattern
-```typescript
-import { useWallet } from '@txnlab/use-wallet-react'
-const { activeAddress, transactionSigner } = useWallet()
+# Write (requires fees + payment):
+sp.flat_fee = True
+sp.fee = 2 * 1000  # 2x for outer + inner transaction
+result = atc.execute(algod_client, wait_rounds=4)
 ```
 
-### Creating an AlgorandClient
-```typescript 
-import { AlgorandClient } from '@algorandfoundation/algokit-utils'
-import { getAlgodConfigFromViteEnvironment } from '../utils/network/getAlgoClientConfigs'
-
-const algodConfig = getAlgodConfigFromViteEnvironment()
-const algorandClient = AlgorandClient.fromConfig({ algodConfig })
-algorandClient.setDefaultSigner(transactionSigner)
-```
-
-### Calling a Contract Method
+### Frontend API Call Pattern
 ```typescript
-const client = algorandClient.client.getTypedAppClientById(CounterClient, {
-  appId: BigInt(APP_ID),
-  defaultSender: activeAddress,
+const response = await fetch(`${VITE_BACKEND_URL}/api/register`, {
+  method: 'POST',
+  body: formData,  // multipart with image + creator_name + platform
 })
-const result = await client.send.incrCounter()
 ```
 
-### IPFS Upload (Pinata)
-- Use `uploadFileToPinata(file)` from `src/utils/pinata.ts`
-- Returns an IPFS CID; use `VITE_PINATA_GATEWAY/<cid>` for the URL
+### Image Generation (Pollinations AI)
+```typescript
+const url = `https://image.pollinations.ai/prompt/${encoded}?width=512&height=512&nologo=true&seed=42`
+// Fixed seed ensures same prompt → same image → same pHash
+```
 
 ---
 
 ## Deployed Contract IDs (TestNet)
-- **Counter**: App ID `747652603`
-
----
-
-## ARC Standards Used
-- **ARC-3**: NFT metadata standard (image + JSON metadata on IPFS)
-- **ARC-4**: Smart contract ABI interface
-- **ARC-56**: Extended app specification (used for client generation)
-
----
-
-## Common Gotchas
-
-- **microAlgos vs ALGO**: 1 ALGO = 1,000,000 microAlgos. Always convert before transactions.
-- **ASA Opt-In**: Accounts must opt in to an ASA before receiving it. Use `AssetOptIn.tsx` pattern.
-- **Box storage MBR**: The Bank contract uses BoxMap; the deployer must fund the app with enough ALGO to cover minimum balance requirements.
-- **Client regeneration**: After any contract change, regenerate TS clients or the frontend will use stale ABIs.
-- **KMD wallet only works on LocalNet**: Do not expose KMD credentials in production.
-- **Pinata JWT**: Keep this secret. It is exposed in `.env` — do not commit `.env` to git.
+- **GenMark**: App ID `TBD — deploy and fill in`
 
 ---
 
 ## File Locations Quick Reference
 
 | What | Where |
-|---|---|
-| Counter contract source | `projects/contracts/smart_contracts/counter/contract.py` |
-| Bank contract source | `projects/contracts/smart_contracts/bank/contract.py` |
-| Counter TS client | `projects/frontend/src/contracts/Counter.ts` |
-| Bank TS client | `projects/frontend/src/contracts/Bank.ts` |
-| Network config util | `projects/frontend/src/utils/network/getAlgoClientConfigs.ts` |
-| Pinata util | `projects/frontend/src/utils/pinata.ts` |
-| Wallet setup | `projects/frontend/src/App.tsx` |
-| Landing page | `projects/frontend/src/Home.tsx` |
+|------|-------|
+| GenMark contract | `projects/contracts/smart_contracts/genmark/contract.py` |
+| Deploy config | `projects/contracts/smart_contracts/genmark/deploy_config.py` |
+| Contract tests | `projects/contracts/tests/genmark_test.py` |
+| Backend main | `projects/backend/main.py` |
+| pHash logic | `projects/backend/hashing.py` |
+| Algorand calls | `projects/backend/algorand.py` |
+| PDF certificates | `projects/backend/certificate.py` |
+| Backend env template | `projects/backend/.env.example` |
+| Generate page | `projects/frontend/src/pages/Generate.tsx` |
+| Verify page | `projects/frontend/src/pages/Verify.tsx` |
+| DropZone component | `projects/frontend/src/components/DropZone.tsx` |
+| ResultCard component | `projects/frontend/src/components/ResultCard.tsx` |
+| StampBadge component | `projects/frontend/src/components/StampBadge.tsx` |
+| Frontend routing | `projects/frontend/src/App.tsx` |
 | Frontend env template | `projects/frontend/.env.template` |
+| Vercel config | `projects/frontend/vercel.json` |
+
+---
+
+## Common Gotchas
+
+- **pHash vs SHA-256**: Always use perceptual hash (imagehash) not SHA-256. Real images get re-saved.
+- **Box MBR**: Registration requires 0.1 ALGO payment to cover box storage costs.
+- **Inner transaction fee**: Outer `register_content` call needs `fee = 2 * min_fee` for ASA creation inner txn.
+- **simulate() vs execute()**: Use `atc.simulate()` for read-only methods (free); `atc.execute()` for writes.
+- **Box key namespacing**: Registry = `b"reg_"`, Flags = `b"flg_"` — keeps box keys distinct.
+- **Soulbound ASA**: total=1, decimals=0, default_frozen=True, all roles=contract.
+- **No blockchain in frontend**: Frontend NEVER calls Algorand directly — only via backend.
+- **React Router rewrite**: `vercel.json` rewrites all routes to `index.html` for SPA routing.
+- **Demo mode**: Frontend gracefully shows demo states when backend is unavailable (503 errors).
+- **Fixed seed**: Pollinations AI uses `seed=42` for reproducible images (same prompt → same pHash).
+
+---
+
+## ARC Standards Used
+- **ARC-4**: Smart contract ABI interface (methods, struct types, return values)
+- **ARC-4 Box Storage**: Per-content key-value storage
+- **ASA Soulbound**: total=1, decimals=0, default_frozen=True, contract-controlled
+
+## Current Date
+Today: 2026-02-19

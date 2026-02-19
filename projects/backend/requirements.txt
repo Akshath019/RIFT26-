@@ -1,0 +1,25 @@
+# GenMark Backend — Python Dependencies
+# =======================================
+# FastAPI web framework + ASGI server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# File upload handling in FastAPI
+python-multipart==0.0.20
+
+# Image processing for perceptual hashing
+Pillow==11.1.0
+ImageHash==4.3.1
+
+# Algorand SDK for blockchain interactions
+py-algorand-sdk
+
+
+# HTTP client for fetching images from URLs (async)
+httpx==0.28.1
+
+# PDF certificate generation
+reportlab==4.2.5
+
+# Environment variable management
+python-dotenv==1.0.1
