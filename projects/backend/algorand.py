@@ -167,13 +167,17 @@ def verify_content_on_chain(phash: str) -> dict:
 
     record = return_value[1]
     creator_name = str(record[0])
-    creator_address_bytes = record[1]
+    creator_address_raw = record[1]
     platform = str(record[2])
     timestamp_unix = int(record[3])
     asa_id = int(record[4])
     flag_count = int(record[5])
 
-    creator_address = algosdk.encoding.encode_address(bytes(creator_address_bytes))
+    # algosdk ABI decoder already returns address as a base32 string
+    if isinstance(creator_address_raw, str):
+        creator_address = creator_address_raw
+    else:
+        creator_address = algosdk.encoding.encode_address(bytes(creator_address_raw))
     timestamp_str = datetime.fromtimestamp(timestamp_unix, tz=timezone.utc).strftime(
         "%Y-%m-%d %H:%M:%S UTC"
     )

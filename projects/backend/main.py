@@ -39,19 +39,10 @@ BROWSER_HEADERS = {
     ),
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://image.pollinations.ai/",
+    "Referer": "https://picsum.photos/",
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# App Configuration
-# ─────────────────────────────────────────────────────────────────────────────
-
-app = FastAPI(
-    title="GenMark API",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+app = FastAPI(title="GenMark API", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
 
 allowed_origins = [
     "http://localhost:5173",
@@ -69,11 +60,6 @@ app.add_middleware(
 )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Models
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class FlagRequest(BaseModel):
     phash: str
     description: str
@@ -88,11 +74,6 @@ class CertificateRequest(BaseModel):
     app_id: str
     phash: str
     flag_descriptions: list[str] = []
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Health
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 @app.get("/")
@@ -112,13 +93,18 @@ async def health():
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper
-# ─────────────────────────────────────────────────────────────────────────────
+def _picsum_url_for_prompt(prompt: str) -> str:
+    """
+    Deterministic picsum URL from prompt.
+    seed = sum of ASCII values of all characters mod 1000.
+    Same prompt → same seed → same image → same pHash every time.
+    """
+    seed = sum(ord(c) for c in prompt) % 1000
+    return f"https://picsum.photos/seed/{seed}/512/512"
 
 
 async def fetch_image_from_url(url: str) -> bytes:
-    """Fetch image bytes using browser-like headers to bypass Cloudflare."""
+    """Fetch image bytes using browser-like headers."""
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         try:
             response = await client.get(url)
@@ -135,17 +121,20 @@ async def fetch_image_from_url(url: str) -> bytes:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoint 0: Image Generation Proxy
-# Proxies Pollinations AI so the browser never hits Pollinations directly
-# (avoids CORS 403 from localhost)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/generate-image")
 async def generate_image(prompt: str):
+    """
+    Returns a deterministic image for a given prompt using picsum.
     seed = sum(ord(c) for c in prompt) % 1000
-    url = f"https://picsum.photos/seed/{seed}/512/512"
+    Same prompt always returns the same image and same pHash.
+    """
+    url = _picsum_url_for_prompt(prompt)
     image_bytes = await fetch_image_from_url(url)
     return Response(content=image_bytes, media_type="image/jpeg")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoint 1: Register Content
@@ -158,22 +147,44 @@ async def register(
     platform: str = Form("GenMark"),
     image: Optional[UploadFile] = File(None),
     image_url: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None),
 ):
-    if image and image.content_type and image.content_type.startswith("image/"):
+    """
+    Register AI-generated image on Algorand blockchain.
+
+    Priority order for image source:
+      1. prompt  — backend computes SAME picsum URL as /api/generate-image
+                   This guarantees the registered pHash matches the displayed image.
+      2. image   — direct file upload
+      3. image_url — fetch from external URL
+    """
+    image_bytes: bytes
+
+    if prompt:
+        # Most reliable: backend recomputes same URL used for display
+        url = _picsum_url_for_prompt(prompt)
+        logger.info(f"Fetching image for prompt '{prompt[:50]}' → {url}")
+        image_bytes = await fetch_image_from_url(url)
+        logger.info(f"Fetched {len(image_bytes)} bytes")
+
+    elif image and image.content_type and image.content_type.startswith("image/"):
         image_bytes = await image.read()
         logger.info(f"Received image upload: {image.filename} ({len(image_bytes)} bytes)")
+
     elif image_url:
         logger.info(f"Fetching image from URL: {image_url}")
         image_bytes = await fetch_image_from_url(image_url)
         logger.info(f"Fetched {len(image_bytes)} bytes from URL")
+
     else:
         raise HTTPException(
             status_code=400,
-            detail="Provide either an image file (multipart) or an image_url (form field)",
+            detail="Provide a prompt, image file, or image_url",
         )
 
     try:
         phash = compute_phash(image_bytes)
+        logger.info(f"Computed pHash: {phash}")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Image processing failed: {e}")
 
@@ -184,7 +195,7 @@ async def register(
         if "already been registered" in error_str:
             raise HTTPException(status_code=409, detail="This image has already been registered on GenMark")
         if "ALGORAND_APP_ID" in error_str or "not set" in error_str.lower():
-            raise HTTPException(status_code=503, detail="Blockchain service not configured. Contract not yet deployed.")
+            raise HTTPException(status_code=503, detail="Blockchain service not configured.")
         logger.error(f"Blockchain registration failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Blockchain registration failed: {error_str}")
 
@@ -213,13 +224,11 @@ async def verify(
     elif image_url:
         image_bytes = await fetch_image_from_url(image_url)
     else:
-        raise HTTPException(
-            status_code=400,
-            detail="Provide either an image file (multipart) or an image_url (form field)",
-        )
+        raise HTTPException(status_code=400, detail="Provide an image file or image_url")
 
     try:
         phash = compute_phash(image_bytes)
+        logger.info(f"Verify pHash: {phash}")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Image processing failed: {e}")
 

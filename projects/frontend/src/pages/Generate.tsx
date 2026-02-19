@@ -1,12 +1,3 @@
-/**
- * GenMark — Generate Page
- * ========================
- * Image display uses the backend proxy (/api/generate-image) to avoid
- * CORS/Cloudflare 403 when fetching from Pollinations directly in the browser.
- * Registration sends the Pollinations URL to the backend which fetches it
- * server-side (no CORS issue from the server).
- */
-
 import { useCallback, useState } from 'react'
 import StampBadge from '../components/StampBadge'
 
@@ -45,18 +36,18 @@ export default function Generate() {
     setStampData(null)
     setErrorMsg('')
 
-    // Display image via backend proxy — avoids CORS 403 from localhost
+    // Display image via backend proxy
     const proxyUrl = `${BACKEND_URL}/api/generate-image?prompt=${encodeURIComponent(trimmedPrompt)}`
     setImageUrl(proxyUrl)
     setStatus('registering')
 
     try {
-      // Backend fetches the Pollinations URL server-side (no CORS issue)
-      const pollinationsUrl = `https://picsum.photos/seed/${encodeURIComponent(trimmedPrompt).length % 1000}/512/512`
+      // Send the RAW PROMPT to backend — backend computes seed itself
+      // This guarantees the same image is displayed AND registered
       const formData = new FormData()
       formData.append('creator_name', 'GenMark User')
       formData.append('platform', 'GenMark')
-      formData.append('image_url', pollinationsUrl)
+      formData.append('prompt', trimmedPrompt) // backend uses same seed formula
 
       const response = await fetch(`${BACKEND_URL}/api/register`, {
         method: 'POST',
@@ -64,7 +55,6 @@ export default function Generate() {
       })
 
       if (!response.ok) {
-        // 409 = already registered — treat as success
         if (response.status === 409) {
           setStatus('stamped')
           setStampData({ tx_id: 'existing', asa_id: 0, phash: '', app_id: 0 })
@@ -91,7 +81,6 @@ export default function Generate() {
         message.includes('fetch') ||
         message.includes('NetworkError')
       ) {
-        // Backend not reachable or contract not deployed → demo mode
         setStatus('stamped')
         setStampData({ tx_id: 'demo-mode', asa_id: 0, phash: '', app_id: 0 })
       } else {
@@ -115,7 +104,6 @@ export default function Generate() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900">
-      {/* Navigation */}
       <nav className="border-b border-white/10 backdrop-blur-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center justify-between">
           <a href="/generate" className="flex items-center gap-2 text-white font-bold text-lg">
@@ -134,7 +122,6 @@ export default function Generate() {
       </nav>
 
       <div className="max-w-4xl mx-auto px-4 py-10">
-        {/* Header */}
         <div className="text-center mb-10">
           <h1 className="text-4xl font-extrabold text-white mb-3 tracking-tight">Create & Protect Your Image</h1>
           <p className="text-slate-400 text-lg max-w-xl mx-auto">
@@ -142,7 +129,6 @@ export default function Generate() {
           </p>
         </div>
 
-        {/* Prompt Input */}
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6 mb-6">
           <label className="block text-sm font-medium text-slate-300 mb-2">Describe your image</label>
           <div className="flex gap-3">
@@ -170,7 +156,6 @@ export default function Generate() {
             </button>
           </div>
 
-          {/* Sample prompts */}
           <div className="mt-4">
             <p className="text-xs text-slate-500 mb-2">Try a sample prompt:</p>
             <div className="flex flex-wrap gap-2">
@@ -188,7 +173,6 @@ export default function Generate() {
           </div>
         </div>
 
-        {/* Skeleton while generating (before imageUrl is set) */}
         {!imageUrl && status === 'generating' && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
             <div className="w-full aspect-square max-w-md mx-auto rounded-xl bg-white/5 animate-pulse flex items-center justify-center">
@@ -200,13 +184,11 @@ export default function Generate() {
           </div>
         )}
 
-        {/* Image Result Area */}
         {imageUrl && (
           <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
             <div className="relative max-w-md mx-auto">
               <img src={imageUrl} alt={prompt} className="w-full rounded-xl shadow-2xl" />
 
-              {/* Certifying overlay */}
               {status === 'registering' && (
                 <div className="absolute inset-0 bg-black/65 backdrop-blur-sm rounded-xl flex items-center justify-center">
                   <div className="text-center px-6">
@@ -221,7 +203,6 @@ export default function Generate() {
                 </div>
               )}
 
-              {/* Stamp badge */}
               {status === 'stamped' && stampData && (
                 <div className="absolute top-3 right-3">
                   <StampBadge isDemo={isDemo || isExisting} txId={stampData.tx_id} asaId={stampData.asa_id} />
@@ -229,7 +210,6 @@ export default function Generate() {
               )}
             </div>
 
-            {/* Status message */}
             {status === 'stamped' && stampData && (
               <div className="mt-6 space-y-4">
                 <div
@@ -243,7 +223,7 @@ export default function Generate() {
                       </p>
                       <p className="text-sm text-slate-400 mt-0.5">
                         {isDemo
-                          ? 'Backend not connected — showing demo. Deploy backend to enable real registration.'
+                          ? 'Backend not connected — showing demo.'
                           : isExisting
                             ? 'This image was already registered. Your authorship is on record.'
                             : "Your image's origin is permanently recorded and provable."}
@@ -252,7 +232,6 @@ export default function Generate() {
                   </div>
                 </div>
 
-                {/* Technical details */}
                 {!isDemo && !isExisting && stampData.tx_id && (
                   <details className="bg-white/5 border border-white/10 rounded-xl">
                     <summary className="px-4 py-3 text-sm text-slate-400 cursor-pointer hover:text-white select-none">
@@ -297,7 +276,6 @@ export default function Generate() {
               </div>
             )}
 
-            {/* Error state */}
             {status === 'error' && (
               <div className="mt-4 rounded-xl p-4 bg-red-500/10 border border-red-500/30">
                 <p className="text-red-300 font-medium text-sm">⚠ {errorMsg}</p>
@@ -316,7 +294,6 @@ export default function Generate() {
           </div>
         )}
 
-        {/* How it works — idle state */}
         {!imageUrl && status === 'idle' && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
             {[
