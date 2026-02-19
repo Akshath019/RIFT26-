@@ -44,17 +44,10 @@ BROWSER_HEADERS = {
 
 app = FastAPI(title="GenMark API", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
 
-allowed_origins = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    os.getenv("FRONTEND_URL", "https://genmark.vercel.app"),
-    "*",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
