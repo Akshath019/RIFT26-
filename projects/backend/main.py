@@ -185,7 +185,9 @@ async def register(
         result = register_content_on_chain(phash, creator_name, platform)
     except Exception as e:
         error_str = str(e)
-        if "already been registered" in error_str:
+        if "already been registered" in error_str or (
+            "logic eval error" in error_str and "assert failed" in error_str
+        ):
             raise HTTPException(status_code=409, detail="This image has already been registered on GenMark")
         if "ALGORAND_APP_ID" in error_str or "not set" in error_str.lower():
             raise HTTPException(status_code=503, detail="Blockchain service not configured.")
