@@ -31,7 +31,6 @@ export default function Generate() {
   const [status, setStatus] = useState<Status>('idle')
   const [stampData, setStampData] = useState<StampData | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
-  const [currentPrompt, setCurrentPrompt] = useState('')
 
   useEffect(() => {
     const t = setTimeout(() => setIsMounted(true), 100)
@@ -40,7 +39,6 @@ export default function Generate() {
 
   const handleGenerate = useCallback(async () => {
     const prompt = PROMPTS[Math.floor(Math.random() * PROMPTS.length)]
-    setCurrentPrompt(prompt)
     setStatus('generating')
     setImageUrl(null)
     setStampData(null)
@@ -88,6 +86,7 @@ export default function Generate() {
 
   const isDemo = stampData?.tx_id === 'demo-mode'
   const isExisting = stampData?.tx_id === 'existing'
+  const isPending = stampData?.tx_id === 'pending'
   const isBusy = status === 'generating' || status === 'registering'
 
   return (
@@ -221,14 +220,9 @@ export default function Generate() {
         {imageUrl && status !== 'generating' && (
           <div className="relative z-10 mx-auto w-full max-w-2xl px-6 pt-10 pb-32">
 
-            {/* Current prompt label */}
-            {currentPrompt && (
-              <p className="mb-4 text-center text-sm text-white/40 italic">"{currentPrompt}"</p>
-            )}
-
             {/* Image card */}
             <div className="relative rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
-              <img src={imageUrl} alt={currentPrompt} className="w-full object-cover" />
+              <img src={imageUrl} alt="Generated image" className="w-full object-cover" />
 
               {/* Registering overlay */}
               {status === 'registering' && (
@@ -238,7 +232,7 @@ export default function Generate() {
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
                   <p className="text-white font-semibold">Certifying on Algorand…</p>
-                  <p className="text-white/50 text-xs">~20 seconds</p>
+                  <p className="text-white/50 text-xs">Computing fingerprint</p>
                 </div>
               )}
 
@@ -271,20 +265,30 @@ export default function Generate() {
                 </div>
 
                 {/* Tech details */}
-                {!isDemo && !isExisting && stampData.tx_id && (
+                {!isDemo && !isExisting && stampData.phash && (
                   <div className="rounded-xl border border-white/10 bg-white/5 px-5 py-4 space-y-2 text-xs font-mono">
-                    <div className="flex justify-between text-white/40">
-                      <span>Certificate #</span>
-                      <span className="text-white/70">{stampData.asa_id}</span>
-                    </div>
                     <div className="flex justify-between text-white/40">
                       <span>Fingerprint</span>
                       <span className="text-white/70">{stampData.phash}</span>
                     </div>
-                    <div className="flex justify-between text-white/40">
-                      <span>Tx ID</span>
-                      <span className="text-white/70 truncate max-w-[200px]">{stampData.tx_id}</span>
-                    </div>
+                    {!isPending && stampData.asa_id > 0 && (
+                      <div className="flex justify-between text-white/40">
+                        <span>Certificate #</span>
+                        <span className="text-white/70">{stampData.asa_id}</span>
+                      </div>
+                    )}
+                    {!isPending && stampData.tx_id && (
+                      <div className="flex justify-between text-white/40">
+                        <span>Tx ID</span>
+                        <span className="text-white/70 truncate max-w-[200px]">{stampData.tx_id}</span>
+                      </div>
+                    )}
+                    {isPending && (
+                      <div className="flex justify-between text-white/40">
+                        <span>Status</span>
+                        <span className="text-emerald-400/70">Registering on-chain…</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

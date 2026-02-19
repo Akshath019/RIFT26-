@@ -9,7 +9,7 @@ from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -134,8 +134,26 @@ async def generate_image(prompt: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _register_in_background(phash: str, creator_name: str, platform: str) -> None:
+    """Fire-and-forget blockchain registration (runs in thread pool)."""
+    try:
+        result = register_content_on_chain(phash, creator_name, platform)
+        logger.info(f"Background registration complete: phash={phash} asa_id={result['asa_id']}")
+    except Exception as e:
+        error_str = str(e)
+        if "already been registered" in error_str or (
+            "logic eval error" in error_str and "assert failed" in error_str
+        ):
+            logger.info(f"Background registration: already registered phash={phash}")
+        elif "ALGORAND_APP_ID" in error_str or "not set" in error_str.lower():
+            logger.warning(f"Background registration: blockchain not configured phash={phash}")
+        else:
+            logger.error(f"Background registration failed phash={phash}: {e}", exc_info=True)
+
+
 @app.post("/api/register")
 async def register(
+    background_tasks: BackgroundTasks,
     creator_name: str = Form(...),
     platform: str = Form("GenMark"),
     image: Optional[UploadFile] = File(None),
@@ -145,16 +163,17 @@ async def register(
     """
     Register AI-generated image on Algorand blockchain.
 
+    Computes pHash synchronously, returns immediately, and runs the
+    blockchain call in the background to avoid proxy timeouts.
+
     Priority order for image source:
       1. prompt  — backend computes SAME picsum URL as /api/generate-image
-                   This guarantees the registered pHash matches the displayed image.
       2. image   — direct file upload
       3. image_url — fetch from external URL
     """
     image_bytes: bytes
 
     if prompt:
-        # Most reliable: backend recomputes same URL used for display
         url = _picsum_url_for_prompt(prompt)
         logger.info(f"Fetching image for prompt '{prompt[:50]}' → {url}")
         image_bytes = await fetch_image_from_url(url)
@@ -177,30 +196,20 @@ async def register(
 
     try:
         phash = compute_phash(image_bytes)
-        logger.info(f"Computed pHash: {phash}")
+        logger.info(f"Computed pHash: {phash} — queuing blockchain registration")
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Image processing failed: {e}")
 
-    try:
-        result = register_content_on_chain(phash, creator_name, platform)
-    except Exception as e:
-        error_str = str(e)
-        if "already been registered" in error_str or (
-            "logic eval error" in error_str and "assert failed" in error_str
-        ):
-            raise HTTPException(status_code=409, detail="This image has already been registered on GenMark")
-        if "ALGORAND_APP_ID" in error_str or "not set" in error_str.lower():
-            raise HTTPException(status_code=503, detail="Blockchain service not configured.")
-        logger.error(f"Blockchain registration failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Blockchain registration failed: {error_str}")
+    # Queue blockchain call — returns immediately, no proxy timeout
+    background_tasks.add_task(_register_in_background, phash, creator_name, platform)
 
     return {
         "success": True,
-        "tx_id": result["tx_id"],
-        "asa_id": result["asa_id"],
+        "tx_id": "pending",
+        "asa_id": 0,
         "phash": phash,
-        "app_id": result["app_id"],
-        "message": "Content fingerprint permanently registered on Algorand blockchain",
+        "app_id": int(os.getenv("ALGORAND_APP_ID", "0")),
+        "message": "Content fingerprint registration queued on Algorand blockchain",
     }
 
 
