@@ -1,32 +1,22 @@
-/**
- * GenMark — App Entry Point
- * ==========================
- * Configures routing for the two main pages:
- *   /generate → Create & certify AI images
- *   /verify   → Public image origin verification portal
- *
- * No wallet provider needed — all blockchain interactions
- * happen through the backend (Render) service.
- */
-
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Generate from './pages/Generate'
+import Login from './pages/Login'
 import Verify from './pages/Verify'
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const stored = localStorage.getItem('genmark_user')
+  if (!stored) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        {/* Default route: redirect to the generation page */}
         <Route path="/" element={<Navigate to="/generate" replace />} />
-
-        {/* Generation page: mock AI platform with silent origin registration */}
-        <Route path="/generate" element={<Generate />} />
-
-        {/* Verification portal: public, no account required */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/generate" element={<ProtectedRoute><Generate /></ProtectedRoute>} />
         <Route path="/verify" element={<Verify />} />
-
-        {/* Catch-all: redirect unknown routes to generate page */}
         <Route path="*" element={<Navigate to="/generate" replace />} />
       </Routes>
     </BrowserRouter>

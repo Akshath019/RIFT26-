@@ -5,13 +5,14 @@ GenMark — FastAPI Backend
 import logging
 import os
 import urllib.parse
+from datetime import datetime
 from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from algorand import (
@@ -19,6 +20,14 @@ from algorand import (
     get_flag_from_chain,
     register_content_on_chain,
     verify_content_on_chain,
+)
+from auth import (
+    UserCreate,
+    UserLogin,
+    create_token,
+    get_db,
+    hash_password,
+    verify_password,
 )
 from certificate import generate_certificate
 from hashing import compute_phash
@@ -39,7 +48,6 @@ BROWSER_HEADERS = {
     ),
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://picsum.photos/",
 }
 
 app = FastAPI(title="GenMark API", version="1.0.0", docs_url="/docs", redoc_url="/redoc")
@@ -51,6 +59,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch all unhandled exceptions and return a JSON 500 that passes through CORS middleware."""
+    logger.error(f"Unhandled exception on {request.method} {request.url}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+    )
 
 
 class FlagRequest(BaseModel):
@@ -86,19 +104,33 @@ async def health():
     }
 
 
-def _picsum_url_for_prompt(prompt: str) -> str:
+def _pollinations_url_for_prompt(prompt: str) -> str:
+    """Pollinations AI — free, no API key. seed=42 → deterministic per prompt."""
+    encoded = urllib.parse.quote(prompt, safe="")
+    return f"https://image.pollinations.ai/prompt/{encoded}?width=512&height=512&nologo=true&seed=42"
+
+
+def _loremflickr_url_for_prompt(prompt: str) -> str:
     """
-    Deterministic picsum URL from prompt.
-    seed = sum of ASCII values of all characters mod 1000.
-    Same prompt → same seed → same image → same pHash every time.
+    LoremFlickr fallback — free, no API key, keyword-based, deterministic via lock.
+    Extracts meaningful words from the prompt as search keywords.
     """
-    seed = sum(ord(c) for c in prompt) % 1000
-    return f"https://picsum.photos/seed/{seed}/512/512"
+    stopwords = {
+        'a', 'an', 'the', 'in', 'of', 'at', 'on', 'over', 'and', 'with',
+        'made', 'is', 'are', 'by', 'for', 'to', 'from', 'into', 'above',
+        'below', 'flying', 'floating', 'entirely', 'glowing', 'ancient',
+        'futuristic', 'neon', 'made', 'entirely',
+    }
+    words = [w.strip('.,!?') for w in prompt.lower().split()]
+    keywords = [w for w in words if w not in stopwords and len(w) > 2][:4]
+    seed = sum(ord(c) for c in prompt) % 9999 + 1
+    kw_str = ','.join(keywords) if keywords else 'nature,landscape'
+    return f"https://loremflickr.com/512/512/{kw_str}?lock={seed}"
 
 
 async def fetch_image_from_url(url: str) -> bytes:
     """Fetch image bytes using browser-like headers."""
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=BROWSER_HEADERS) as client:
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True, headers=BROWSER_HEADERS) as client:
         try:
             response = await client.get(url)
             response.raise_for_status()
@@ -112,6 +144,24 @@ async def fetch_image_from_url(url: str) -> bytes:
             raise HTTPException(status_code=400, detail=f"Failed to fetch image: {e}")
 
 
+async def fetch_image_for_prompt(prompt: str) -> bytes:
+    """
+    Try Pollinations AI first (real AI images). Fall back to LoremFlickr
+    (keyword-based photos, deterministic) if Pollinations is unavailable.
+    Same prompt always resolves to the same image source → same pHash.
+    """
+    try:
+        url = _pollinations_url_for_prompt(prompt)
+        logger.info(f"Trying Pollinations: {url[:80]}…")
+        return await fetch_image_from_url(url)
+    except HTTPException as e:
+        logger.warning(f"Pollinations failed ({e.detail}), falling back to LoremFlickr")
+
+    url = _loremflickr_url_for_prompt(prompt)
+    logger.info(f"Using LoremFlickr fallback: {url}")
+    return await fetch_image_from_url(url)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoint 0: Image Generation Proxy
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,12 +170,12 @@ async def fetch_image_from_url(url: str) -> bytes:
 @app.get("/api/generate-image")
 async def generate_image(prompt: str):
     """
-    Returns a deterministic image for a given prompt using picsum.
-    seed = sum(ord(c) for c in prompt) % 1000
-    Same prompt always returns the same image and same pHash.
+    Returns an image for a given prompt.
+    Tries Pollinations AI (real AI image) first; falls back to LoremFlickr
+    (keyword-based photos) if Pollinations is unavailable.
+    Both sources are deterministic — same prompt → same image → same pHash.
     """
-    url = _picsum_url_for_prompt(prompt)
-    image_bytes = await fetch_image_from_url(url)
+    image_bytes = await fetch_image_for_prompt(prompt)
     return Response(content=image_bytes, media_type="image/jpeg")
 
 
@@ -174,9 +224,8 @@ async def register(
     image_bytes: bytes
 
     if prompt:
-        url = _picsum_url_for_prompt(prompt)
-        logger.info(f"Fetching image for prompt '{prompt[:50]}' → {url}")
-        image_bytes = await fetch_image_from_url(url)
+        logger.info(f"Fetching image for prompt '{prompt[:50]}'")
+        image_bytes = await fetch_image_for_prompt(prompt)
         logger.info(f"Fetched {len(image_bytes)} bytes")
 
     elif image and image.content_type and image.content_type.startswith("image/"):
@@ -308,3 +357,51 @@ async def certificate(request: CertificateRequest):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Endpoint 5: Auth — Signup / Login
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/auth/signup")
+async def signup(user: UserCreate):
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not configured. Set MONGODB_URI.")
+    try:
+        existing = await db.users.find_one({"email": user.email.lower().strip()})
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already registered")
+        doc = {
+            "name": user.name.strip(),
+            "email": user.email.lower().strip(),
+            "password_hash": hash_password(user.password),
+            "created_at": datetime.utcnow().isoformat(),
+        }
+        result = await db.users.insert_one(doc)
+        token = create_token(str(result.inserted_id), doc["email"], doc["name"])
+        return {"token": token, "name": doc["name"], "email": doc["email"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Signup DB error: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
+
+@app.post("/api/auth/login")
+async def login(user: UserLogin):
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail="Database not configured. Set MONGODB_URI.")
+    try:
+        doc = await db.users.find_one({"email": user.email.lower().strip()})
+        if not doc or not verify_password(user.password, doc["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        token = create_token(str(doc["_id"]), doc["email"], doc["name"])
+        return {"token": token, "name": doc["name"], "email": doc["email"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login DB error: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")

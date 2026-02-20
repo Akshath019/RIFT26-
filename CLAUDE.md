@@ -16,12 +16,13 @@ even if the image was cropped, compressed, or resized.
 
 ## Current State (2026-02-20)
 
-- Frontend: RUNNING at localhost:5173
-- Backend: RUNNING at localhost:8000
+- Frontend: RUNNING at localhost:5173 / Vercel
+- Backend: RUNNING at localhost:8000 / Railway
 - Contract: COMPILED and DEPLOYED on TestNet
-- Deployer account: FUNDED with TestNet ALGO
-- Image generation: WORKING (Picsum Photos, free, no API key, deterministic)
-- Verify endpoint: FIXED (algosdk ABI address decode bug resolved)
+- Auth: ADDED — MongoDB Atlas signup/login with JWT
+- Certificate: SIMPLIFIED — clean 1-page PDF (creator name + date)
+- Generate page: GATED — login required to generate images
+- Image generation: WORKING (Picsum Photos, free, deterministic)
 
 ---
 
@@ -172,7 +173,7 @@ algokit goal account info --address <ADDRESS>
 cd projects/backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-# create .env file with DEPLOYER_MNEMONIC and ALGORAND_APP_ID
+# create .env file with DEPLOYER_MNEMONIC, ALGORAND_APP_ID, MONGODB_URI, JWT_SECRET_KEY
 uvicorn main:app --reload --port 8000
 
 # Terminal 2 — Frontend
@@ -180,7 +181,7 @@ cd projects/frontend
 npm install
 npm run dev
 
-# Open http://localhost:5173
+# Open http://localhost:5173/login
 ```
 
 ---
@@ -240,13 +241,28 @@ Fixed seed=42 ensures same prompt → same image → same pHash (deterministic).
 
 ## Environment Files
 
-### Backend (`projects/backend/.env`) — CREATED, needs App ID update:
+### Backend (`projects/backend/.env`) — CREATED:
 ```
 ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
 ALGORAND_ALGOD_TOKEN=aaaa...aaaa (64 a's — AlgoNode accepts any token)
-ALGORAND_APP_ID=0                 ← UPDATE after deploy
+ALGORAND_APP_ID=<deployed app id>
 DEPLOYER_MNEMONIC=birth heart ... medal (25 words)
 FRONTEND_URL=http://localhost:5173
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/genmark  ← MongoDB Atlas
+JWT_SECRET_KEY=<random 32+ char string>  ← JWT signing secret
+```
+
+#### MongoDB Atlas Setup (one-time, free):
+1. **mongodb.com/atlas** → Create free account → New Project → Create M0 cluster (free tier)
+2. **Database Access** → Add Database User → username + password → Read/Write
+3. **Network Access** → Add IP → `0.0.0.0/0` (allow all — required for Railway)
+4. **Connect** → Drivers → Python → Copy connection string
+5. Replace `<password>` in the connection string with your DB user password
+6. Add `MONGODB_URI` and `JWT_SECRET_KEY` to Railway environment variables
+
+#### Generate JWT_SECRET_KEY:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 ### Frontend (`projects/frontend/.env`) — CREATED:
@@ -447,13 +463,33 @@ docker compose down
 
 ## Remaining TODO
 
-1. Deploy smart contract: `algokit project deploy testnet` → copy App ID
-2. Set `ALGORAND_APP_ID=<number>` in `projects/backend/.env`
-3. Push Docker files to GitHub: `git add . && git commit -m "add Docker" && git push`
-4. Deploy backend on Railway (uses `projects/backend/Dockerfile`)
-5. Deploy frontend on Vercel or Railway (uses `projects/frontend/Dockerfile`)
-6. Update `FRONTEND_URL` in Railway backend vars → redeploy
-7. Test full register → verify flow end-to-end
+1. Create MongoDB Atlas free cluster → get connection string
+2. Add `MONGODB_URI` + `JWT_SECRET_KEY` to Railway environment variables
+3. Push all changes to GitHub → Railway + Vercel auto-redeploy
+4. Test: visit `/login` → signup → generate image → verify → download certificate
+
+---
+
+## Auth Architecture
+
+### Backend (`projects/backend/auth.py`)
+- `get_db()` — returns async Motor MongoDB client for database `genmark`
+- `UserCreate` / `UserLogin` — Pydantic models for signup/login
+- `hash_password()` / `verify_password()` — bcrypt via passlib
+- `create_token()` / `decode_token()` — HS256 JWT (7-day expiry)
+
+### Backend Auth Endpoints
+- `POST /api/auth/signup` — creates user in MongoDB, returns JWT + name + email
+- `POST /api/auth/login` — verifies password, returns JWT + name + email
+
+### Frontend (`projects/frontend/src/hooks/useAuth.ts`)
+- Reads/writes `genmark_user` key in localStorage
+- `login(data)` — stores `{token, name, email}`
+- `logout()` — clears storage, redirects to `/login`
+
+### Route Protection (`projects/frontend/src/App.tsx`)
+- `ProtectedRoute` — wraps `/generate`; redirects to `/login` if no localStorage token
+- `/verify` — public, no auth required
 
 ---
 
@@ -465,15 +501,17 @@ docker compose down
 | Deploy config | `projects/contracts/smart_contracts/genmark/deploy_config.py` |
 | Contract tests | `projects/contracts/tests/genmark_test.py` |
 | Backend main | `projects/backend/main.py` |
+| Auth helpers | `projects/backend/auth.py` |
 | pHash logic | `projects/backend/hashing.py` |
 | Algorand calls | `projects/backend/algorand.py` |
 | PDF certificates | `projects/backend/certificate.py` |
 | Backend env | `projects/backend/.env` |
 | Backend env template | `projects/backend/.env.example` |
 | Contracts env | `projects/contracts/.env.testnet` |
+| Login page | `projects/frontend/src/pages/Login.tsx` |
 | Generate page | `projects/frontend/src/pages/Generate.tsx` |
 | Verify page | `projects/frontend/src/pages/Verify.tsx` |
-| DropZone component | `projects/frontend/src/components/DropZone.tsx` |
+| Auth hook | `projects/frontend/src/hooks/useAuth.ts` |
 | ResultCard component | `projects/frontend/src/components/ResultCard.tsx` |
 | StampBadge component | `projects/frontend/src/components/StampBadge.tsx` |
 | Frontend routing | `projects/frontend/src/App.tsx` |

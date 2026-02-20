@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAuth } from '../hooks/useAuth'
 import ResultCard from '../components/ResultCard'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
@@ -20,6 +21,7 @@ export interface VerifyResult {
 }
 
 export default function Verify() {
+  const { user, logout } = useAuth()
   const [isMounted, setIsMounted] = useState(false)
   const [status, setStatus] = useState<VerifyStatus>('idle')
   const [result, setResult] = useState<VerifyResult | null>(null)
@@ -123,9 +125,15 @@ export default function Verify() {
               <div className="h-5 w-5 rounded-full bg-white" />
               <span className="text-base font-semibold tracking-tight">GenMark</span>
             </div>
-            <nav className="flex items-center gap-6 text-sm text-white/70">
+            <nav className="flex items-center gap-5 text-sm text-white/70">
               <a href="/generate" className="hover:text-white transition-colors">Create</a>
               <a href="/verify" className="text-white border-b border-white/60 pb-0.5">Verify</a>
+              {user && (
+                <div className="flex items-center gap-3 pl-2 border-l border-white/10">
+                  <span className="text-white/50 text-xs">{user.name}</span>
+                  <button onClick={logout} className="text-xs text-white/30 hover:text-white/70 transition-colors">Log out</button>
+                </div>
+              )}
             </nav>
           </div>
         </header>
