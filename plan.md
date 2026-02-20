@@ -1,6 +1,617 @@
-# GenMark — Implementation Plan (Updated 2026-02-19)
+# GenMark — Implementation Plan (Updated 2026-02-20)
 
-## Current Status: ALL CODE DONE, Deploy Blocked by .env Formatting
+## Current Status: Deployed on Railway + Vercel. Feature branch: three new features below.
+
+---
+
+# NEW FEATURES (Feature Branch)
+
+## Feature 1 — Alteration Detection & Tracking
+## Feature 2 — Email Creator on Misuse Report
+## Feature 3 — Upload & Morph Existing Registered Image
+## Feature 4 — Progressive Auth (UX fix: don't force login on page load)
+## Feature 5 — Fix Duplicate Registration Problem (deterministic prompts)
+
+---
+
+## Feature 1: Alteration Detection
+
+### What it does
+When a user registers or verifies an image, the backend checks whether it is a **modified version** of an already-registered image (cropped, resized, filtered, etc.) using **perceptual hash similarity**.
+
+- **Exact match** (Hamming distance = 0) → "Already registered"
+- **Similar match** (Hamming distance ≤ 10) → "Alteration detected — modified from [original creator]"
+- **No match** → New content, register normally
+
+### How pHash similarity works
+pHash produces a 64-bit (16 hex char) fingerprint. The **Hamming distance** between two pHashes counts how many bits differ:
+- Distance 0 = identical images
+- Distance ≤ 10 = visually similar (cropped, resized, colour-adjusted, lightly edited)
+- Distance > 10 = different images
+
+### Architecture Decision
+**No smart contract changes.** Alterations are tracked in MongoDB. The new pHash is registered on-chain normally as a new content record (it IS a new fingerprint). MongoDB stores the parent relationship.
+
+### MongoDB Collections
+
+**Existing:** `users` — auth accounts
+
+**New:** `registrations`
+```json
+{
+  "phash": "a9e3c4b2f1d08e7a",
+  "creator_name": "Alice",
+  "creator_email": "alice@example.com",
+  "timestamp": "2026-02-20T10:00:00",
+  "asa_id": 123456,
+  "tx_id": "ABCD...",
+  "is_modification": false,
+  "original_phash": null,
+  "modified_by_name": null
+}
+```
+
+**Alteration entry:**
+```json
+{
+  "phash": "a9e3c4b2f1d08e7b",
+  "creator_name": "Bob",
+  "creator_email": "bob@example.com",
+  "is_modification": true,
+  "original_phash": "a9e3c4b2f1d08e7a",
+  "modified_by_name": "Bob"
+}
+```
+
+### Backend Changes (`main.py`)
+
+**New helper — pHash Hamming distance:**
+```python
+def hamming_distance(h1: str, h2: str) -> int:
+    return bin(int(h1, 16) ^ int(h2, 16)).count('1')
+```
+
+**New helper — find similar pHash in MongoDB:**
+```python
+async def find_similar_registration(phash: str, threshold: int = 10):
+    db = get_db()
+    if db is None:
+        return None
+    async for doc in db.registrations.find({}, {"phash": 1, "creator_name": 1, "creator_email": 1}):
+        if hamming_distance(phash, doc["phash"]) <= threshold:
+            return doc
+    return None
+```
+
+**Updated `/api/register` flow:**
+1. Compute pHash (existing)
+2. Check exact match in MongoDB → return "already registered"
+3. Check similar match (Hamming ≤ 10) → set `is_modification=True`, store `original_phash`
+4. Register new pHash on-chain (background task, same as before)
+5. Store to MongoDB `registrations` collection
+6. Return response with `is_modification`, `original_creator` fields
+
+**Updated `/api/verify` response** — include `is_modification` and `modified_by` if applicable
+
+### Frontend Changes
+
+**Generate page** — after stamping, if `is_modification=true`, show:
+```
+⚠ Modified Content
+This image appears to be derived from content originally
+created by [original_creator_name]
+```
+
+**Verify page / ResultCard** — add a "Modified By" row in the details card when `modified_by_name` is present.
+
+---
+
+## Feature 2: Email Creator on Misuse Report
+
+### What it does
+When someone submits a flag/misuse report for an image, the backend:
+1. Looks up the original creator's email from MongoDB `registrations`
+2. Sends them an email: "Your content has been flagged"
+
+### Email Service: Resend
+- Free tier: 3,000 emails/month, no credit card
+- Sign up at resend.com → API Keys → Create key
+- Add `RESEND_API_KEY=re_xxx` to `.env` and Railway variables
+
+### New File: `backend/email.py`
+```python
+import os, httpx
+
+async def send_flag_notification(
+    creator_email: str,
+    creator_name: str,
+    phash: str,
+    description: str,
+    tx_id: str,
+):
+    api_key = os.getenv("RESEND_API_KEY", "")
+    if not api_key:
+        return  # Email not configured, skip silently
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "from": "GenMark <noreply@genmark.app>",
+                "to": creator_email,
+                "subject": "Your GenMark content has been flagged",
+                "html": f"""
+                    <h2>Misuse Report Filed</h2>
+                    <p>Hi {creator_name},</p>
+                    <p>A misuse report has been filed against your registered content:</p>
+                    <ul>
+                        <li><b>Fingerprint:</b> {phash}</li>
+                        <li><b>Report:</b> {description}</li>
+                        <li><b>Transaction:</b> {tx_id}</li>
+                    </ul>
+                    <p>This report is permanently recorded on the Algorand blockchain.</p>
+                """
+            }
+        )
+```
+
+**Updated `/api/flag` in main.py:**
+After `flag_misuse_on_chain` succeeds:
+1. Look up `phash` in MongoDB `registrations` → get `creator_email` + `creator_name`
+2. Call `send_flag_notification(...)` in a background task
+
+### New Dependency
+Add to `requirements.txt`:
+```
+resend==2.5.0
+```
+
+---
+
+---
+
+## Feature 3: Upload & Morph Existing Registered Image
+
+### What it does
+A user uploads any image. If it is already registered on GenMark, they can apply a basic
+visual transformation (brightness, contrast, saturation, blur, rotate, crop) on the backend
+using Pillow. The morphed result gets a new pHash (similar to the original but different),
+is registered on-chain as a new entry with `modified_by = current user's name`, and the
+certificate PDF reads:
+
+```
+Original Creator : Alice
+Morphed By       : Bob
+Original Hash    : a9e3c4b2f1d08e7a
+Morphed Hash     : a9e3c4b2f1d08e7b
+```
+
+The original creator also receives an email (Feature 2) notifying them their content was morphed.
+
+---
+
+### Why this makes sense
+- Demonstrates the full **provenance chain**: original → morphed → registered
+- Shows pHash similarity detection (Feature 1) working in real time
+- Triggers email notification to original creator (Feature 2)
+- The certificate proves both the original authorship AND the modification — unforgeable on Algorand
+- Realistic use case: fan art, remixed content, derivative works with attribution
+
+---
+
+### User Flow
+
+```
+1. User goes to /morph page
+2. Uploads an image (drag-and-drop or file picker)
+3. Backend computes pHash → checks if registered
+   ├── NOT registered → show warning "This image has no origin record on GenMark"
+   │                    (still allow morph, registers as fresh content)
+   └── REGISTERED     → show "Original by Alice · Certified [date]"
+4. User picks a morph type:
+   [ Brighten ]  [ Contrast ]  [ Saturate ]  [ Blur ]  [ Rotate ]  [ Crop ]
+5. Backend applies transform via Pillow → returns morphed image preview
+6. User sees: original image (left) | morphed image (right)
+7. User clicks "Register Morph"
+8. Backend: registers morphed pHash on-chain, stores in MongoDB with parent link
+9. Certificate shows: Original Creator + Morphed By
+10. Original creator receives email notification (if email on file)
+```
+
+---
+
+### New Backend Endpoint: `POST /api/morph`
+
+**Input** (multipart form):
+```
+image       : UploadFile   — the original image file
+morph_type  : str          — one of: brightness | contrast | saturation | blur | rotate | crop
+```
+
+**Processing (Pillow transforms):**
+```python
+def apply_morph(image_bytes: bytes, morph_type: str) -> bytes:
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+    if morph_type == "brightness":
+        img = ImageEnhance.Brightness(img).enhance(1.5)   # +50% brightness
+    elif morph_type == "contrast":
+        img = ImageEnhance.Contrast(img).enhance(1.6)     # +60% contrast
+    elif morph_type == "saturation":
+        img = ImageEnhance.Color(img).enhance(1.7)        # vivid colours
+    elif morph_type == "blur":
+        img = img.filter(ImageFilter.GaussianBlur(radius=3))
+    elif morph_type == "rotate":
+        img = img.rotate(15, expand=False)                # 15° clockwise
+    elif morph_type == "crop":
+        w, h = img.size
+        m = int(min(w, h) * 0.1)                         # 10% margin crop
+        img = img.crop((m, m, w - m, h - m))
+        img = img.resize((w, h), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+```
+
+**Output (JSON):**
+```json
+{
+  "original_phash": "a9e3c4b2f1d08e7a",
+  "morphed_phash":  "a9e3c4b2f1d08e7b",
+  "hamming_distance": 3,
+  "original_creator": "Alice",
+  "original_registered": true,
+  "morphed_image_b64": "<base64 encoded JPEG>"
+}
+```
+
+Frontend renders the morphed image from the base64 string — no extra round-trip needed.
+
+---
+
+### Updated `/api/register` for Morphed Images
+
+When `morphed_by` form field is present:
+```
+creator_name : str  — current logged-in user (the morpher)
+platform     : str  — "GenMark"
+image        : file — the morphed image bytes
+morphed_by   : str  — current user's name (signals this is a morph)
+original_phash: str — pHash of the original image
+```
+
+Backend stores in MongoDB `registrations`:
+```json
+{
+  "phash": "a9e3c4b2f1d08e7b",
+  "creator_name": "Bob",
+  "is_modification": true,
+  "original_phash": "a9e3c4b2f1d08e7a",
+  "modified_by_name": "Bob",
+  "morph_type": "brightness"
+}
+```
+
+---
+
+### Updated Certificate (`certificate.py`)
+
+When `modified_by_name` is present, the PDF gets two extra rows:
+
+```
+Visual Fingerprint (Original) : a9e3c4b2f1d08e7a
+Visual Fingerprint (Morphed)  : a9e3c4b2f1d08e7b
+Original Creator              : Alice
+Morphed By                    : Bob
+```
+
+---
+
+### New Frontend Page: `/morph`
+
+**Components:**
+- `DropZone` (reuse existing) — upload original image
+- Origin info card — shows original creator + certification date (or "unregistered" warning)
+- Morph picker — 6 buttons: Brighten / Contrast / Saturate / Blur / Rotate / Crop
+- Side-by-side preview — original (left) + morphed (right)
+- "Register Morph" button — sends morphed image to `/api/register` with `morphed_by` field
+- Stamp badge appears on morphed image after registration
+
+**State machine:**
+```
+idle → uploading → verified → morphing → morphed → registering → stamped
+```
+
+**Route added to `App.tsx`:**
+```tsx
+<Route path="/morph" element={<ProtectedRoute><Morph /></ProtectedRoute>} />
+```
+
+**Nav link added** to Generate and Verify pages:
+```
+Create  |  Morph  |  Verify
+```
+
+---
+
+### How All Three Features Connect
+
+```
+Feature 3 (Morph tool)
+        │
+        │  produces a modified image with new pHash
+        ▼
+Feature 1 (Alteration detection)
+        │
+        │  detects Hamming distance ≤ 10, links to original creator
+        ▼
+Feature 2 (Email notification)
+        │
+        │  sends "Your image was morphed by Bob" to Alice's email
+        ▼
+Certificate shows full provenance chain:
+  Original Creator: Alice → Morphed By: Bob
+  Both permanently recorded on Algorand
+```
+
+This is the core demo story for the hackathon: **complete content provenance from creation → modification → notification**.
+
+---
+
+---
+
+## Feature 4: Progressive Auth (UX Fix)
+
+### The Problem
+Currently `ProtectedRoute` wraps `/generate` and `/morph` — the moment a user clicks
+"Create" or "Morph" in the nav they are immediately redirected to `/login`. This is
+hostile UX. The user hasn't done anything yet. They haven't even seen the product.
+
+**Rule of thumb:** Never ask for an account before the user has a reason to want one.
+Forcing signup at the door is the single biggest cause of bounce on landing pages.
+
+### What it should do instead
+
+| Page | Auth required? | When to prompt |
+|------|---------------|----------------|
+| `/` or `/generate` (view) | No | User can see the page, read about it, browse |
+| `/verify` | No | Anyone can verify an image publicly |
+| `/morph` (view) | No | User can see the tool |
+| Click "Generate" button | Yes | Only at the moment they click Generate |
+| Click "Register Morph" button | Yes | Only when they try to register |
+| Submitting a flag/report | No | Public action, no auth needed |
+
+### How it works (NOT implementing yet — design decision)
+
+**Remove:** `ProtectedRoute` wrapper from `/generate` and `/morph` routes in `App.tsx`
+
+**Add:** Inline auth gate — when user clicks the Generate or Register Morph button
+without being logged in, instead of redirecting, show an **inline modal or inline
+prompt** within the page:
+
+```
+┌─────────────────────────────────────┐
+│  Sign in to generate & certify      │
+│  your images on Algorand            │
+│                                     │
+│  [Log in]  or  [Create account]     │
+│                                     │
+│  Verification is always free        │
+│  and doesn't need an account.       │
+└─────────────────────────────────────┘
+```
+
+This way:
+- Casual visitors can explore the product freely
+- The auth prompt appears with context ("you need this to certify your image")
+- User understands WHY they're being asked to sign up
+- Much lower bounce rate, much better first impression
+
+### Key principle
+**Lazy authentication** — ask for credentials at the last responsible moment,
+not the first possible moment. The user should already want the feature before
+you ask them to create an account for it.
+
+---
+
+---
+
+## Feature 5: Fix Duplicate Registration Problem
+
+### The Problem
+
+The current system is fundamentally broken:
+
+```
+User types: "a dragon over a city"
+System sends: "a dragon over a city 1708400000"   ← Date.now() appended
+Image generated → pHash abc123 → registered on blockchain ✓
+
+Same user, 5 minutes later: "a dragon over a city"
+System sends: "a dragon over a city 1708400300"   ← different timestamp
+Image generated → DIFFERENT image → pHash def456 → registered AGAIN ✓
+```
+
+**Result:** The same prompt creates multiple different images, each with a different pHash,
+each consuming a separate blockchain entry. The database fills with duplicates. The
+`seed=42` determinism is defeated by the random timestamp. The entire provenance model
+breaks — you can't "verify" an image by re-generating it because the timestamp was lost.
+
+### Root Cause
+
+We added `Date.now()` to the prompt in `Generate.tsx` to work around "already registered"
+errors from the blockchain. But that was treating the symptom, not the cause.
+
+### The Real Solution: Same Prompt = Same Image = Same Record (Embrace Idempotency)
+
+**Remove `Date.now()` from the prompt.** The prompt goes to the backend exactly as the
+user typed it. `seed=42` ensures the same prompt always produces the same image, which
+always produces the same pHash. This is **correct by design**.
+
+**Handle "already registered" as a success, not an error.** When the backend detects that
+a pHash is already on-chain, it should:
+1. Look up the existing registration data (creator, timestamp, asa_id, tx_id)
+2. Return it to the frontend as a **successful lookup**, not a 409 error
+3. Frontend shows: "Already Certified ✓ — This image was registered on [date] by [creator]"
+
+### Backend Changes (`/api/register`)
+
+```python
+# CURRENT (broken):
+# On duplicate → background task silently fails, frontend gets tx_id="pending" forever
+
+# NEW (correct):
+@app.post("/api/register")
+async def register(...):
+    phash = compute_phash(image_bytes)
+
+    # 1. Check MongoDB for existing registration
+    db = get_db()
+    if db:
+        existing = await db.registrations.find_one({"phash": phash})
+        if existing:
+            return {
+                "success": True,
+                "already_registered": True,
+                "tx_id": existing.get("tx_id", "on-chain"),
+                "asa_id": existing.get("asa_id", 0),
+                "phash": phash,
+                "creator_name": existing.get("creator_name", "Unknown"),
+                "registered_at": existing.get("timestamp", ""),
+                "message": "This image is already certified on Algorand"
+            }
+
+    # 2. Not registered → register normally
+    background_tasks.add_task(_register_in_background, phash, creator_name, platform)
+
+    # 3. Mirror to MongoDB for fast future lookups
+    if db:
+        await db.registrations.insert_one({
+            "phash": phash,
+            "creator_name": creator_name,
+            "creator_email": user_email,  # from auth token
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+
+    return { "success": True, "already_registered": False, ... }
+```
+
+### Frontend Changes (`Generate.tsx`)
+
+```tsx
+// REMOVE this line:
+const effective = prompt.trim() + ' ' + Date.now()
+
+// USE this instead (pure prompt, no timestamp):
+const effective = prompt.trim()
+```
+
+When response has `already_registered: true`:
+```
+┌─────────────────────────────────────────────────┐
+│  ✓ Already Certified                            │
+│                                                  │
+│  This image was registered on 2026-02-19         │
+│  by Alice                                        │
+│                                                  │
+│  Fingerprint: a9e3c4b2f1d08e7a                  │
+│  Certificate #: 12345                            │
+│                                                  │
+│  Same prompt always generates the same image.    │
+│  That's how provenance works.                    │
+└─────────────────────────────────────────────────┘
+```
+
+### Why This Is Correct
+
+The whole point of GenMark is: **same content → same fingerprint → one record on-chain**.
+
+If you type the same prompt twice, you SHOULD get the same image, and the system SHOULD
+say "already certified". That's not a bug — it's the proof that the system works.
+Re-generating the same prompt and getting the same certificate is literally the
+**verification** step working from the creation side.
+
+### Summary of Changes
+
+| What | Change |
+|------|--------|
+| `Generate.tsx` | Remove `Date.now()` from prompt |
+| `main.py` `/api/register` | Check MongoDB first; return existing record if found |
+| `main.py` `/api/register` | Mirror new registrations to MongoDB `registrations` collection |
+| Frontend status | New state `already_registered` → shows green "Already Certified" card |
+
+---
+
+## Files to Change (All 5 Features)
+
+| File | Change |
+|------|--------|
+| `backend/main.py` | `hamming_distance()`, `find_similar_registration()`, `apply_morph()`, new `/api/morph` endpoint, update `/api/register` (MongoDB-first duplicate check, morphed_by field, mirror to MongoDB), update `/api/verify` (return modification info), update `/api/flag` (email trigger) |
+| `backend/email.py` | NEW — Resend email sender |
+| `backend/certificate.py` | Add "Original Creator" + "Morphed By" rows when modification present |
+| `backend/requirements.txt` | Add `resend==2.5.0` |
+| `backend/.env` | Add `RESEND_API_KEY=re_xxx` |
+| `frontend/src/pages/Morph.tsx` | NEW — full morph page (upload → verify origin → pick transform → preview → register) |
+| `frontend/src/pages/Generate.tsx` | Remove `Date.now()` from prompt, show "Already Certified" for duplicates, show "Modified Content" for alteration, remove ProtectedRoute gate |
+| `frontend/src/pages/Verify.tsx` | Pass `modified_by` to ResultCard, add Morph nav link |
+| `frontend/src/components/ResultCard.tsx` | Add `modifiedBy` + `originalCreator` rows |
+| `frontend/src/App.tsx` | Add `/morph` route, remove ProtectedRoute from `/generate` and `/morph`, keep auth inline |
+
+---
+
+## Implementation Order
+
+1. `backend/email.py` — standalone, no deps on other new code
+2. `backend/main.py`:
+   - Add `hamming_distance()` + `find_similar_registration()`
+   - Add `apply_morph()` using Pillow (already a dependency)
+   - Add `POST /api/morph` endpoint
+   - Update `POST /api/register` — mirror to MongoDB, detect alteration, accept `morphed_by`
+   - Update `POST /api/verify` — return `is_modification` + `modified_by_name`
+   - Update `POST /api/flag` — trigger email after successful flag
+3. `backend/certificate.py` — add morphed-by rows
+4. `frontend/src/components/ResultCard.tsx` — add modification props + UI rows
+5. `frontend/src/pages/Morph.tsx` — new morph page
+6. `frontend/src/App.tsx` — add `/morph` route
+7. `frontend/src/pages/Generate.tsx` — show alteration badge
+8. `frontend/src/pages/Verify.tsx` — add Morph nav link, pass modification data
+9. Add `RESEND_API_KEY` to Railway variables
+10. Push → auto-deploy
+
+---
+
+## Open Questions / Decisions Made
+
+| Question | Decision |
+|----------|----------|
+| Smart contract changes? | No — MongoDB tracks alteration, no redeploy needed |
+| Hamming distance threshold? | ≤ 10 bits (out of 64) = standard "same image" threshold |
+| What if creator has no email? | Skip email silently — creator may have registered before auth |
+| What if MongoDB is down? | Alteration check skipped, register normally (graceful degradation) |
+| Email sender domain? | Use Resend's shared domain for hackathon |
+| Where to show alteration info? | Generate page (after stamp), Verify page (result card), Certificate PDF |
+| Morph happens client-side or server-side? | Server-side (Pillow) — consistent pHash, no Canvas API complexity |
+| What if uploaded image is NOT registered? | Still allow morph — registers as fresh content with no parent link |
+| How many morph types? | 6: brightness, contrast, saturation, blur, rotate, crop |
+| Morphed image format returned to frontend? | Base64 JPEG in JSON response — no extra image endpoint needed |
+
+---
+
+## Open Questions / Decisions Made
+
+| Question | Decision |
+|----------|----------|
+| Smart contract changes? | No — MongoDB tracks alteration, no redeploy needed |
+| Hamming distance threshold? | ≤ 10 bits (out of 64) = standard "same image" threshold |
+| What if creator has no email? | Skip email silently — creator may have registered before auth |
+| What if MongoDB is down? | Alteration check skipped, register normally (graceful degradation) |
+| Email sender domain? | Use Resend's shared domain for hackathon, set up custom domain later |
+| Where to show alteration info? | Both Generate page (after stamp) and Verify page (in result card) |
+
+---
+
 
 The smart contract compiles. The backend code is ready. The frontend works.
 The **only blocker** is a formatting error in `.env.testnet` — the mnemonic
