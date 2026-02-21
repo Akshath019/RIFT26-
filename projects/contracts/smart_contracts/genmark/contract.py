@@ -47,21 +47,29 @@ class ContentRecord(arc4.Struct):
     Stored in Algorand Box storage, keyed by the perceptual hash of the image.
     Each field is ARC-4 encoded for efficient binary storage and ABI compatibility.
 
+    Provenance chain: each morphed image links back to its parent via original_phash.
+    Walking the chain backwards (original_phash → original_phash → …) gives the full
+    ancestry: Original Creator → Morphed by Bob → Morphed by Carol.
+
     Field encoding:
-        creator_name    → arc4.String  (variable length, 2-byte length prefix)
+        creator_name    → arc4.String  (original content creator, propagated through chain)
         creator_address → arc4.Address (fixed 32 bytes, Algorand standard encoding)
         platform        → arc4.String  (variable length, 2-byte length prefix)
         timestamp       → arc4.UInt64  (fixed 8 bytes, Unix seconds)
         asa_id          → arc4.UInt64  (fixed 8 bytes, soulbound ASA identifier)
         flag_count      → arc4.UInt64  (fixed 8 bytes, misuse report counter)
+        original_phash  → arc4.String  (parent pHash, empty string if this is original content)
+        morphed_by      → arc4.String  (name of person who morphed, empty string if original)
     """
 
-    creator_name: arc4.String  # Human-readable creator display name
-    creator_address: arc4.Address  # 32-byte Algorand wallet address of the creator
+    creator_name: arc4.String  # Original content creator (owner), propagated through the chain
+    creator_address: arc4.Address  # 32-byte Algorand wallet address of the registrant
     platform: arc4.String  # Platform/tool that generated the content (e.g. "GenMark")
     timestamp: arc4.UInt64  # Unix timestamp of registration (seconds since epoch)
     asa_id: arc4.UInt64  # Soulbound ASA ID — the on-chain ownership credential
     flag_count: arc4.UInt64  # Number of misuse reports filed against this content
+    original_phash: arc4.String  # Parent pHash; empty string "" if this is the original content
+    morphed_by: arc4.String  # Name of the person who morphed this; empty string "" if original
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,6 +136,8 @@ class GenMark(ARC4Contract):
         phash: arc4.String,
         creator_name: arc4.String,
         platform: arc4.String,
+        original_phash: arc4.String,
+        morphed_by: arc4.String,
         pay_txn: gtxn.PaymentTransaction,
     ) -> arc4.UInt64:
         """
@@ -164,8 +174,8 @@ class GenMark(ARC4Contract):
         assert pay_txn.receiver == Global.current_application_address, (
             "Payment must be directed to the GenMark contract to fund box storage"
         )
-        assert pay_txn.amount >= UInt64(100_000), (
-            "Minimum 0.1 ALGO (100,000 microAlgos) required for box MBR + ASA creation"
+        assert pay_txn.amount >= UInt64(200_000), (
+            "Minimum 0.2 ALGO (200,000 microAlgos) required for box MBR + ASA creation"
         )
 
         # ── Prevent duplicate registrations (backdating attack mitigation) ───
@@ -206,11 +216,13 @@ class GenMark(ARC4Contract):
         # This creates an immutable on-chain record that anyone can query forever.
         self.registry[phash] = ContentRecord(
             creator_name=creator_name,
-            creator_address=arc4.Address(Txn.sender),  # Caller's wallet address
+            creator_address=arc4.Address(Txn.sender),
             platform=platform,
-            timestamp=arc4.UInt64(Global.latest_timestamp),  # Block timestamp
-            asa_id=arc4.UInt64(asset_id),  # Ownership credential reference
-            flag_count=arc4.UInt64(0),  # No misuse reports at registration time
+            timestamp=arc4.UInt64(Global.latest_timestamp),
+            asa_id=arc4.UInt64(asset_id),
+            flag_count=arc4.UInt64(0),
+            original_phash=original_phash,  # Empty string for original content
+            morphed_by=morphed_by,          # Empty string for original content
         )
 
         # ── Increment global registration counter ─────────────────────────────
@@ -268,6 +280,8 @@ class GenMark(ARC4Contract):
             timestamp=arc4.UInt64(0),
             asa_id=arc4.UInt64(0),
             flag_count=arc4.UInt64(0),
+            original_phash=arc4.String(""),
+            morphed_by=arc4.String(""),
         )
 
     # ─────────────────────────────────────────────────────────────────────

@@ -22,6 +22,9 @@ interface StampData {
   asa_id: number
   phash: string
   app_id: number
+  already_registered?: boolean
+  is_modification?: boolean
+  original_creator?: string
 }
 
 export default function Generate() {
@@ -34,6 +37,7 @@ export default function Generate() {
   const [stampData, setStampData] = useState<StampData | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
   const [typedExample, setTypedExample] = useState('')
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false)
   const imgRef = useRef<HTMLImageElement>(null)
   const typeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Tracks which FULL example is currently being typed (so Generate uses complete text, not partial)
@@ -79,11 +83,18 @@ export default function Generate() {
   }, [prompt])
 
   const handleGenerate = useCallback(async () => {
+    // F4: gate auth inline — don't redirect, show prompt instead
+    if (!user) {
+      setShowAuthPrompt(true)
+      return
+    }
+
     // Use the FULL example prompt from the array — never a partially-typed string
     const effective = prompt.trim() || EXAMPLE_PROMPTS[exampleIdxRef.current]
     if (!effective) return
     if (!prompt.trim()) setPrompt(effective)
 
+    setShowAuthPrompt(false)
     setActivePrompt(effective)
     setStatus('generating')
     setImageUrl(null)
@@ -93,7 +104,7 @@ export default function Generate() {
     // Route through backend — avoids regional Cloudflare blocks on Pollinations
     const url = `${BACKEND_URL}/api/generate-image?prompt=${encodeURIComponent(effective)}`
     setImageUrl(url)
-  }, [prompt])
+  }, [prompt, user])
 
   const handleImageLoaded = useCallback(async () => {
     if (status !== 'generating') return
@@ -111,32 +122,25 @@ export default function Generate() {
       })
 
       if (!response.ok) {
-        if (response.status === 409) {
-          setStatus('stamped')
-          setStampData({ tx_id: 'existing', asa_id: 0, phash: '', app_id: 0 })
-          return
-        }
         const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.detail || 'Registration failed')
+        throw new Error(errorData.detail || `Registration failed (${response.status})`)
       }
 
       const data = await response.json()
-      setStampData({ tx_id: data.tx_id, asa_id: data.asa_id, phash: data.phash, app_id: data.app_id })
+      setStampData({
+        tx_id: data.tx_id,
+        asa_id: data.asa_id,
+        phash: data.phash,
+        app_id: data.app_id,
+        already_registered: data.already_registered,
+        is_modification: data.is_modification,
+        original_creator: data.original_creator,
+      })
       setStatus('stamped')
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      if (
-        message.includes('503') ||
-        message.includes('not configured') ||
-        message.includes('fetch') ||
-        message.includes('NetworkError')
-      ) {
-        setStatus('stamped')
-        setStampData({ tx_id: 'demo-mode', asa_id: 0, phash: '', app_id: 0 })
-      } else {
-        setStatus('error')
-        setErrorMsg(message)
-      }
+      const message = err instanceof Error ? err.message : 'Registration failed'
+      setStatus('error')
+      setErrorMsg(message)
     }
   }, [status, activePrompt, user])
 
@@ -147,8 +151,7 @@ export default function Generate() {
     }
   }, [status])
 
-  const isDemo = stampData?.tx_id === 'demo-mode'
-  const isExisting = stampData?.tx_id === 'existing'
+  const isExisting = stampData?.already_registered === true
   const isPending = stampData?.tx_id === 'pending'
 
   return (
@@ -234,6 +237,7 @@ export default function Generate() {
             </div>
             <nav className="flex items-center gap-5 text-sm text-white/70">
               <a href="/generate" className="text-white border-b border-white/60 pb-0.5">Create</a>
+              <a href="/morph" className="hover:text-white transition-colors">Morph</a>
               <a href="/verify" className="hover:text-white transition-colors">Verify</a>
               {user && (
                 <div className="flex items-center gap-3 pl-2 border-l border-white/10">
@@ -244,6 +248,38 @@ export default function Generate() {
             </nav>
           </div>
         </header>
+
+        {/* ── F4: Inline auth prompt (shown instead of redirect) ── */}
+        {showAuthPrompt && status === 'idle' && (
+          <div className="relative z-10 mx-auto w-full max-w-md px-6 pt-10">
+            <div className="rounded-2xl border border-white/15 bg-white/5 backdrop-blur-sm px-7 py-7 text-center">
+              <div className="h-10 w-10 rounded-full bg-rose-500/20 flex items-center justify-center mx-auto mb-4">
+                <svg className="h-5 w-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h3 className="text-white font-semibold text-base mb-2">Sign in to generate & certify</h3>
+              <p className="text-white/45 text-sm mb-6 leading-relaxed">
+                Create an account to generate images and record your authorship permanently on Algorand.
+                Verification is always free and never needs an account.
+              </p>
+              <div className="flex gap-3">
+                <a href="/login" className="flex-1 rounded-full border border-white/20 py-2.5 text-sm font-semibold text-white/80 hover:border-white/40 hover:text-white transition-all text-center">
+                  Log in
+                </a>
+                <a href="/login?tab=signup" className="flex-1 rounded-full bg-white py-2.5 text-sm font-semibold text-black hover:bg-rose-50 transition-all text-center">
+                  Create account
+                </a>
+              </div>
+              <button
+                onClick={() => setShowAuthPrompt(false)}
+                className="mt-4 text-xs text-white/25 hover:text-white/50 transition-colors"
+              >
+                Continue browsing without an account
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── Hero section (idle) ── */}
         {status === 'idle' && (
@@ -425,7 +461,7 @@ export default function Generate() {
               {/* Stamp badge with pop animation */}
               {status === 'stamped' && stampData && (
                 <div className="absolute top-3 right-3 stamp-pop">
-                  <StampBadge isDemo={isDemo || isExisting} txId={stampData.tx_id} asaId={stampData.asa_id} />
+                  <StampBadge isDemo={isExisting} txId={stampData.tx_id} asaId={stampData.asa_id} />
                 </div>
               )}
             </div>
@@ -436,26 +472,42 @@ export default function Generate() {
 
                 {/* Status banner */}
                 <div
-                  className={`rounded-xl border px-5 py-4 flex items-start gap-3 ${isDemo || isExisting ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}
+                  className={`rounded-xl border px-5 py-4 flex items-start gap-3 ${isExisting ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}
                   style={{ animation: 'fadeInUp 0.5s ease-out forwards' }}
                 >
-                  <span className="text-2xl mt-0.5">{isDemo || isExisting ? '🔷' : '✅'}</span>
+                  <span className="text-2xl mt-0.5">{isExisting ? '🔷' : '✅'}</span>
                   <div>
-                    <p className={`font-semibold ${isDemo || isExisting ? 'text-amber-300' : 'text-emerald-300'}`}>
-                      {isDemo ? 'Demo Mode' : isExisting ? 'Previously Certified' : 'Content Certified ✓'}
+                    <p className={`font-semibold ${isExisting ? 'text-amber-300' : 'text-emerald-300'}`}>
+                      {isExisting ? 'Previously Certified' : 'Content Certified ✓'}
                     </p>
                     <p className="text-sm text-white/50 mt-0.5">
-                      {isDemo
-                        ? 'Backend not connected — showing demo.'
-                        : isExisting
+                      {isExisting
                         ? 'This image was already registered on Algorand.'
                         : 'Origin permanently recorded on the Algorand blockchain.'}
                     </p>
                   </div>
                 </div>
 
+                {/* F1: Alteration banner */}
+                {stampData.is_modification && stampData.original_creator && (
+                  <div
+                    className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-5 py-4 flex items-start gap-3"
+                    style={{ animation: 'fadeInUp 0.5s ease-out 0.08s both' }}
+                  >
+                    <span className="text-xl mt-0.5">⚠</span>
+                    <div>
+                      <p className="font-semibold text-amber-300">Modified Content Detected</p>
+                      <p className="text-sm text-white/50 mt-0.5">
+                        This image appears to be derived from content originally created by{' '}
+                        <span className="text-amber-300 font-medium">{stampData.original_creator}</span>.
+                        The modification is recorded on-chain.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Tech details */}
-                {!isDemo && !isExisting && stampData.phash && (
+                {!isExisting && stampData.phash && (
                   <div
                     className="rounded-xl border border-white/10 bg-white/5 px-5 py-4 space-y-2 text-xs font-mono"
                     style={{ animation: 'fadeInUp 0.5s ease-out 0.1s both' }}

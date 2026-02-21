@@ -7,9 +7,18 @@ const PILLARS = [92, 84, 78, 70, 62, 54, 46, 34, 18, 34, 46, 54, 62, 70, 78, 84,
 
 type VerifyStatus = 'idle' | 'verifying' | 'found' | 'not_found' | 'error'
 
+// One step in the on-chain provenance chain (returned by /api/verify)
+export interface ProvenanceStep {
+  phash: string
+  creator_name: string   // original owner (propagated through chain)
+  morphed_by: string     // who morphed this step; empty string if original
+  timestamp: string
+  is_original: boolean   // true if this is the root (no original_phash)
+}
+
 export interface VerifyResult {
   found: boolean
-  creator_name?: string
+  creator_name?: string    // original content owner
   creator_address?: string
   platform?: string
   timestamp?: string
@@ -18,6 +27,10 @@ export interface VerifyResult {
   flag_count?: number
   phash?: string
   app_id?: number
+  is_modification?: boolean
+  morphed_by?: string        // who morphed this version
+  original_phash?: string    // parent pHash on-chain
+  provenance_chain?: ProvenanceStep[]
 }
 
 export default function Verify() {
@@ -127,6 +140,7 @@ export default function Verify() {
             </div>
             <nav className="flex items-center gap-5 text-sm text-white/70">
               <a href="/generate" className="hover:text-white transition-colors">Create</a>
+              <a href="/morph" className="hover:text-white transition-colors">Morph</a>
               <a href="/verify" className="text-white border-b border-white/60 pb-0.5">Verify</a>
               {user && (
                 <div className="flex items-center gap-3 pl-2 border-l border-white/10">

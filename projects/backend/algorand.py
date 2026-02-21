@@ -4,6 +4,7 @@ GenMark — Algorand Blockchain Interaction Module
 
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 import algosdk
@@ -22,10 +23,10 @@ logger = logging.getLogger(__name__)
 # ABI Method Definitions
 # ─────────────────────────────────────────────────────────────────────────────
 
-CONTENT_RECORD_TYPE = "(string,address,string,uint64,uint64,uint64)"
+CONTENT_RECORD_TYPE = "(string,address,string,uint64,uint64,uint64,string,string)"
 
 REGISTER_METHOD = abi.Method.from_signature(
-    "register_content(string,string,string,pay)uint64"
+    "register_content(string,string,string,string,string,pay)uint64"
 )
 VERIFY_METHOD = abi.Method.from_signature(
     f"verify_content(string)(bool,{CONTENT_RECORD_TYPE})"
@@ -87,79 +88,130 @@ def get_app_address(app_id: int) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def register_content_on_chain(phash: str, creator_name: str, platform: str) -> dict:
-    """Register a new content item on the GenMark smart contract."""
-    algod_client = get_algod_client()
-    private_key, address = get_deployer_credentials()
-    app_id = get_app_id()
-    app_address = get_app_address(app_id)
-    signer = AccountTransactionSigner(private_key)
+def register_content_on_chain(
+    phash: str,
+    creator_name: str,
+    platform: str,
+    original_phash: str = "",
+    morphed_by: str = "",
+) -> dict:
+    """Register a new content item on the GenMark smart contract.
 
-    sp_with_extra_fee = algod_client.suggested_params()
-    sp_with_extra_fee.flat_fee = True
-    sp_with_extra_fee.fee = 2 * 1000  # covers inner ASA creation itxn
+    original_phash: pHash of the parent image, empty string if this is original content.
+    morphed_by: name of the person who morphed it, empty string if original content.
+    These two fields are stored permanently on-chain and form the provenance chain.
 
-    pay_txn = PaymentTxn(
-        sender=address,
-        sp=algod_client.suggested_params(),
-        receiver=app_address,
-        amt=100_000,  # 0.1 ALGO for box MBR + ASA creation
-    )
+    Retries up to 3 times on network timeout errors (AlgoNode can be slow).
+    """
+    last_error: Exception = RuntimeError("No attempts made")
 
-    box_key = _box_key(phash, b"reg_")
+    for attempt in range(3):
+        try:
+            # Build a fresh ATC each attempt — suggested params expire after a few rounds
+            algod_client = get_algod_client()
+            private_key, address = get_deployer_credentials()
+            app_id = get_app_id()
+            app_address = get_app_address(app_id)
+            signer = AccountTransactionSigner(private_key)
 
-    atc = AtomicTransactionComposer()
-    atc.add_method_call(
-        app_id=app_id,
-        method=REGISTER_METHOD,
-        sender=address,
-        sp=sp_with_extra_fee,
-        signer=signer,
-        method_args=[
-            phash,
-            creator_name,
-            platform,
-            TransactionWithSigner(pay_txn, signer),
-        ],
-        boxes=[(app_id, box_key)],
-    )
+            sp_with_extra_fee = algod_client.suggested_params()
+            sp_with_extra_fee.flat_fee = True
+            sp_with_extra_fee.fee = 2 * 1000  # covers inner ASA creation itxn
 
-    result = atc.execute(algod_client, wait_rounds=4)
-    asa_id = int(result.abi_results[0].return_value)
-    tx_id = result.tx_ids[1]
+            pay_txn = PaymentTxn(
+                sender=address,
+                sp=algod_client.suggested_params(),
+                receiver=app_address,
+                amt=300_000,  # 0.3 ALGO — covers base account MBR + ASA MBR + box MBR
+            )
 
-    logger.info(f"Registered content on-chain: phash={phash} asa_id={asa_id} tx={tx_id}")
+            box_key = _box_key(phash, b"reg_")
 
-    return {"tx_id": tx_id, "asa_id": asa_id, "phash": phash, "app_id": app_id}
+            atc = AtomicTransactionComposer()
+            atc.add_method_call(
+                app_id=app_id,
+                method=REGISTER_METHOD,
+                sender=address,
+                sp=sp_with_extra_fee,
+                signer=signer,
+                method_args=[
+                    phash,
+                    creator_name,
+                    platform,
+                    original_phash,
+                    morphed_by,
+                    TransactionWithSigner(pay_txn, signer),
+                ],
+                boxes=[(app_id, box_key)],
+            )
+
+            result = atc.execute(algod_client, wait_rounds=4)
+            asa_id = int(result.abi_results[0].return_value)
+            tx_id = result.tx_ids[1]
+
+            logger.info(f"Registered content on-chain: phash={phash} asa_id={asa_id} tx={tx_id}")
+            return {"tx_id": tx_id, "asa_id": asa_id, "phash": phash, "app_id": app_id}
+
+        except Exception as e:
+            error_str = str(e).lower()
+            is_timeout = "timeout" in error_str or "timed out" in error_str
+            if is_timeout and attempt < 2:
+                last_error = e
+                logger.warning(
+                    f"Registration timeout (attempt {attempt + 1}/3) — retrying in 4s… ({e})"
+                )
+                time.sleep(4)
+                continue
+            # Non-timeout errors or final retry exhausted: re-raise immediately
+            raise
+
+    raise last_error
 
 
 def verify_content_on_chain(phash: str) -> dict:
-    """Verify a content item by querying the GenMark smart contract."""
-    algod_client = get_algod_client()
-    private_key, address = get_deployer_credentials()
-    app_id = get_app_id()
-    signer = AccountTransactionSigner(private_key)
+    """Verify a content item by querying the GenMark smart contract.
+    Retries once on timeout (simulate is fast but AlgoNode can be slow).
+    """
+    for attempt in range(2):
+        try:
+            algod_client = get_algod_client()
+            private_key, address = get_deployer_credentials()
+            app_id = get_app_id()
+            signer = AccountTransactionSigner(private_key)
 
-    sp = algod_client.suggested_params()
-    sp.flat_fee = True
-    sp.fee = 1000
+            sp = algod_client.suggested_params()
+            sp.flat_fee = True
+            sp.fee = 1000
 
-    box_key = _box_key(phash, b"reg_")
+            box_key = _box_key(phash, b"reg_")
 
-    atc = AtomicTransactionComposer()
-    atc.add_method_call(
-        app_id=app_id,
-        method=VERIFY_METHOD,
-        sender=address,
-        sp=sp,
-        signer=signer,
-        method_args=[phash],
-        boxes=[(app_id, box_key)],
-    )
+            atc = AtomicTransactionComposer()
+            atc.add_method_call(
+                app_id=app_id,
+                method=VERIFY_METHOD,
+                sender=address,
+                sp=sp,
+                signer=signer,
+                method_args=[phash],
+                boxes=[(app_id, box_key)],
+            )
 
-    # simulate = read-only, no fees, no state change
-    simulate_result = atc.simulate(algod_client)
-    return_value = simulate_result.abi_results[0].return_value
+            # simulate = read-only, no fees, no state change
+            simulate_result = atc.simulate(algod_client)
+            break  # success — exit retry loop
+        except Exception as e:
+            error_str = str(e).lower()
+            if ("timeout" in error_str or "timed out" in error_str) and attempt == 0:
+                logger.warning(f"Verify timeout, retrying… ({e})")
+                time.sleep(2)
+                continue
+            raise
+
+    abi_result = simulate_result.abi_results[0] if simulate_result.abi_results else None
+    return_value = abi_result.return_value if abi_result else None
+
+    if return_value is None:
+        return {"found": False}
 
     found = bool(return_value[0])
     if not found:
@@ -172,8 +224,9 @@ def verify_content_on_chain(phash: str) -> dict:
     timestamp_unix = int(record[3])
     asa_id = int(record[4])
     flag_count = int(record[5])
+    original_phash = str(record[6])  # empty string if original content
+    morphed_by = str(record[7])      # empty string if original content
 
-    # algosdk ABI decoder already returns address as a base32 string
     if isinstance(creator_address_raw, str):
         creator_address = creator_address_raw
     else:
@@ -182,7 +235,7 @@ def verify_content_on_chain(phash: str) -> dict:
         "%Y-%m-%d %H:%M:%S UTC"
     )
 
-    logger.info(f"Verified content: phash={phash} found=True creator={creator_name}")
+    logger.info(f"Verified content: phash={phash} found=True creator={creator_name} morphed_by={morphed_by or 'none'}")
 
     return {
         "found": True,
@@ -195,6 +248,9 @@ def verify_content_on_chain(phash: str) -> dict:
         "flag_count": flag_count,
         "phash": phash,
         "app_id": app_id,
+        "original_phash": original_phash,
+        "morphed_by": morphed_by,
+        "is_modification": bool(original_phash),
     }
 
 

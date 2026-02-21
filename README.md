@@ -1,63 +1,158 @@
-# GenMark — AI Content Origin & Misuse Detection
+# GenMark — AI Content Provenance on Algorand
 
-> **Live App**: [https://genmark.vercel.app](https://genmark.vercel.app) _(update after deployment)_
-> **Smart Contract App ID**: `TBD — deploy to TestNet and fill in`
-> **Network**: Algorand TestNet
+> Every AI-generated image gets a silent, unforgeable birth certificate the moment it's created.
 
----
-
-## What Is GenMark?
-
-GenMark is an AI content provenance platform. Every AI-generated image receives a silent, permanent origin record on the Algorand blockchain at the moment of creation. When the image is later found being misused as a deepfake, anyone can verify who created it and when — even if it was resized, compressed, or re-saved.
-
-**The key insight**: A bad actor will never voluntarily verify their own deepfake. So verification cannot be reactive. Every image gets registered *before* any misuse can happen. The evidence already exists on-chain when it's needed.
+**Network:** Algorand TestNet · **App ID:** `755880383`
 
 ---
 
-## Problem & Solution
+## The Problem
 
-| Problem | Solution |
-|---------|----------|
-| Deepfakes spread with zero accountability | Every image registered at creation with permanent on-chain record |
-| SHA-256 changes on any pixel modification | Perceptual hashing (pHash) stable across minor image edits |
-| No chain of evidence for police/courts | Immutable blockchain records + downloadable forensic PDF |
-| Victims can't prove original authorship | Soulbound ASA minted as cryptographic ownership credential |
+Deepfakes are accelerating. Anyone can generate a photorealistic image of a politician, celebrity, or private individual in seconds — for free. When that image spreads as misinformation, there is currently no way to answer the critical question:
+
+**Who made this? When? On which platform?**
+
+Existing approaches fail:
+- **SHA-256 hashing** breaks on any pixel change — a single re-save renders it useless
+- **Watermarks** are stripped by bad actors in seconds
+- **Metadata** (EXIF) is trivially removed or forged
+- **Reactive reporting** requires the creator to come forward voluntarily — which bad actors never do
 
 ---
 
-## Demo Flow
+## The Solution
 
-### Create & Certify
-1. Go to `/generate`
-2. Type a creative prompt → click "Create Image"
-3. Image appears with a small green **"Certified ✓"** badge
-4. Your image's fingerprint is permanently on Algorand — silently, invisibly
+GenMark registers every AI-generated image **at the moment of creation** — before any misuse can occur. The evidence already exists on the blockchain when investigators need it.
 
-### Verify Origin
-1. Go to `/verify`
-2. Upload any image (drag & drop)
-3. See either:
-   - **Green card**: "Verified Original" — creator name, platform, exact timestamp
-   - **Yellow card**: "No Origin Record Found" — suspicious content warning
+**Key insight:** A bad actor will never self-report. So verification cannot be reactive. Every image must be registered proactively, at birth, as an unforgeable on-chain record.
+
+### How It Works
+
+1. **At creation time** — The image is fingerprinted using a perceptual hash (pHash). The fingerprint is registered on the Algorand blockchain in a tamper-proof box. A soulbound ASA (non-transferable token) is minted as a cryptographic ownership credential. The user sees only a small "Certified ✓" badge.
+
+2. **At verification time** — Anyone uploads a suspicious image to the verify portal. The backend computes its pHash and queries the blockchain. In seconds, the full origin record appears: creator name, platform, exact timestamp — even if the image was resized, compressed, or re-saved.
+
+3. **At misuse time** — An investigator clicks "Report Misuse" and describes the violation. An immutable flag is stored on-chain with a blockchain transaction ID that serves as legally meaningful evidence. The original creator receives an email alert.
+
+---
+
+## Why Perceptual Hashing?
+
+Unlike SHA-256, pHash (Perceptual Hash) produces the same fingerprint even after:
+- JPEG re-compression
+- Resize or downscale
+- Format conversion (PNG → JPEG)
+- Minor crop or brightness adjustment
+
+Two images are considered the same if their Hamming distance is ≤ 4 bits out of 64.
+
+```
+Original image → pHash: cdcd3a32664c4d1b
+Same image, re-saved → pHash: cdcd3a32664c4d1b  (identical)
+Same image, resized → pHash: cdcd3a32664c4d19  (distance: 1 bit — still a match)
+Different deepfake → pHash: a4f29d0011c38e2a  (distance: 42 bits — different image)
+```
+
+---
+
+## Why Algorand?
+
+- **4-second finality** — users don't wait for block confirmations
+- **0.001 ALGO per transaction** — negligible cost per registration
+- **Box storage** — native per-key on-chain storage, O(1) lookup without an indexer
+- **Soulbound ASA** — non-transferable certificate built into the base protocol
+- **Puya Python** — readable, auditable smart contracts in Python syntax
+- **AlgoKit** — rapid development and one-command TestNet deployment
+
+---
+
+## Features
+
+### 1. Generate & Certify
+Create AI images with a text prompt. Every image is silently registered on Algorand the moment it's generated. Users see a "Content Certified ✓" badge — no blockchain knowledge required.
+
+### 2. Morph & Track Derivatives
+Upload any registered image and apply a visual transformation (Rotate, Blur, Brighten, etc.). The morphed image is registered on-chain with a full provenance link back to the original creator. When the same image is morphed again by another user, the chain extends:
+
+```
+Alice (original) → Bob (morphed) → Carol (morphed)
+```
+
+Every step is permanently recorded and publicly auditable.
+
+### 3. Verify Any Image
+Upload any image — no account required. The verify portal returns:
+- **Verified Original** — creator name, wallet address, platform, exact timestamp, soulbound ASA ID
+- **Derived Content** — who morphed it, when, plus the full ancestral chain back to the original
+- **No Record Found** — not registered on GenMark (itself a suspicious signal)
+
+### 4. Report & Certify Misuse
+File an immutable misuse report against any registered content. The blockchain transaction ID is legal evidence — it proves a formal report was filed at a specific time with a specific description. Download a forensic PDF certificate for law enforcement.
+
+---
+
+## Real-World Impact
+
+| Use Case | How GenMark Helps |
+|----------|-------------------|
+| Deepfake investigation | Journalist uploads suspicious image → instant origin record with creator details |
+| Political disinformation | Researchers trace viral images back to their generation platform and timestamp |
+| Copyright enforcement | Creators prove original authorship with on-chain timestamp and soulbound ASA |
+| Platform accountability | AI platforms can prove which images originated on their platform |
+| Legal evidence | Blockchain transaction IDs + PDF certificates admissible as timestamped evidence |
+| Derivative attribution | Every morphed/edited version links back to the original creator automatically |
+
+---
+
+## Demo Flows
+
+### Create a Certified Image
+1. Go to `/login` → create an account
+2. Go to `/generate` → type a prompt → click "Create Image"
+3. Image appears with green "Certified ✓" badge
+4. Content is permanently registered on Algorand TestNet
+
+### Verify Any Image
+1. Go to `/verify` (no login needed)
+2. Upload or drag-and-drop any image
+3. See origin record: creator, timestamp, platform, ASA ID
+4. If the image has been morphed, see the full provenance chain
+
+### Create a Derivative
+1. Go to `/morph`
+2. Upload a GenMark-certified image
+3. Choose a transform: Rotate, Blur, Brighten, Contrast, Saturate, or Crop
+4. See Hamming distance badge — Rotate/Blur give the most distinct fingerprint
+5. Click "Register Morph on Algorand" (requires login)
+6. Download the morphed image
+7. Go to `/verify` → upload the morphed image → see "Derived Content" with full chain
 
 ### Report Misuse
-1. On a verified result, click **"Report Misuse"**
-2. Describe the misuse
-3. Click **"Submit Report"** — permanently recorded on-chain
-4. Download a **forensic PDF certificate** for law enforcement
+1. On any verified image result, click "Report Misuse"
+2. Describe the misuse (minimum 10 characters)
+3. Click "Submit Report" → permanently recorded on-chain
+4. Download forensic PDF → share with law enforcement
 
 ---
 
 ## Architecture
 
 ```
-Vercel (Frontend)     →     Render (Backend)     →     Algorand TestNet
-React + TailwindCSS         FastAPI + Python            GenMark Smart Contract
-react-router-dom v7         imagehash pHash             Box storage + ASA minting
-fetch() to backend          algosdk ABI calls           Immutable evidence records
+Frontend (React)         Backend (FastAPI)         Algorand TestNet
+─────────────────        ─────────────────         ─────────────────
+/login                   /api/auth/signup           GenMark Contract
+/generate    ──POST──→   /api/auth/login            App ID: 755880383
+/morph       ──POST──→   /api/register    ──────→   register_content()
+/verify      ──POST──→   /api/verify      ──────→   verify_content()
+             ──POST──→   /api/morph                 flag_misuse()
+             ──POST──→   /api/flag        ──────→   get_flag()
+             ──POST──→   /api/certificate
+                                    │
+                              MongoDB Atlas          Resend Email
+                              (users + email)        (misuse alerts)
 ```
 
-No crypto wallet required for end users — all blockchain interactions happen through the backend.
+No blockchain wallet required for end users. All Algorand interactions happen through the backend service.
 
 ---
 
@@ -66,25 +161,25 @@ No crypto wallet required for end users — all blockchain interactions happen t
 ```
 projects/
 ├── contracts/
-│   └── smart_contracts/
-│       └── genmark/
-│           ├── contract.py      # Algorand Python (Puya) smart contract
-│           └── deploy_config.py # AlgoKit deployment script
+│   └── smart_contracts/genmark/
+│       └── contract.py          # ARC-4 smart contract (Puya Python)
 ├── backend/
 │   ├── main.py                  # FastAPI endpoints
-│   ├── hashing.py               # Perceptual hash computation
-│   ├── algorand.py              # Algorand blockchain calls
-│   ├── certificate.py           # PDF forensic certificate generation
-│   └── requirements.txt
+│   ├── algorand.py              # Blockchain calls + retry logic
+│   ├── hashing.py               # pHash computation
+│   ├── certificate.py           # PDF certificate generation
+│   ├── auth.py                  # MongoDB + JWT authentication
+│   └── notifications.py         # Resend email alerts
 └── frontend/
     └── src/
         ├── pages/
-        │   ├── Generate.tsx     # AI generation + silent registration
-        │   └── Verify.tsx       # Public verification portal
+        │   ├── Login.tsx
+        │   ├── Generate.tsx
+        │   ├── Morph.tsx
+        │   └── Verify.tsx
         └── components/
-            ├── DropZone.tsx     # Drag-and-drop image upload
-            ├── ResultCard.tsx   # Verified/Not Found card + misuse modal
-            └── StampBadge.tsx   # "Content Certified" badge overlay
+            ├── ResultCard.tsx
+            └── StampBadge.tsx
 ```
 
 ---
@@ -93,130 +188,74 @@ projects/
 
 ### Prerequisites
 - Python 3.12+, Poetry
-- Node.js 20+, npm 9+
-- AlgoKit CLI 2.0+ (`pip install algokit`)
-- Docker (for LocalNet testing only)
+- Node.js 18+, npm
+- AlgoKit CLI (`pip install algokit`)
 
-### Step 1: Install Dependencies
-
-```bash
-# Install all Python + Node dependencies
-algokit project bootstrap all
-```
-
-### Step 2: Build & Deploy Smart Contract
+### Local Development
 
 ```bash
-cd projects/contracts
-
-# Compile contract
-algokit project run build
-
-# Create deployer account (save the mnemonic!)
-algokit generate account
-
-# Fund the account on TestNet:
-# https://bank.testnet.algorand.network/ (paste address, get 10 ALGO)
-
-# Deploy to TestNet (prints App ID)
-algokit project deploy testnet
-```
-
-Copy the printed `ALGORAND_APP_ID` value.
-
-### Step 3: Configure Backend
-
-```bash
+# Terminal 1 — Backend
 cd projects/backend
-cp .env.example .env
-```
-
-Edit `.env`:
-```
-ALGORAND_APP_ID=<paste App ID from deploy>
-DEPLOYER_MNEMONIC=<paste your 25-word mnemonic>
-FRONTEND_URL=https://your-app.vercel.app
-```
-
-### Step 4: Run Backend Locally
-
-```bash
-cd projects/backend
+python -m venv venv && source venv/bin/activate   # or venv\Scripts\activate on Windows
 pip install -r requirements.txt
+# create .env (see .env.example)
 uvicorn main:app --reload --port 8000
-# Visit http://localhost:8000/docs for API explorer
-```
 
-### Step 5: Configure Frontend
-
-```bash
+# Terminal 2 — Frontend
 cd projects/frontend
-cp .env.template .env
+npm install
+npm run dev
+# Open http://localhost:5173
 ```
 
-Edit `.env`:
+### Required Environment Variables
+
+**Backend** (`projects/backend/.env`):
+```
+ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
+ALGORAND_ALGOD_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ALGORAND_APP_ID=755880383
+DEPLOYER_MNEMONIC=<your 25-word mnemonic — all on one line>
+FRONTEND_URL=http://localhost:5173
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/genmark
+JWT_SECRET_KEY=<run: python -c "import secrets; print(secrets.token_hex(32))">
+RESEND_API_KEY=<optional — for misuse email alerts>
+```
+
+**Frontend** (`projects/frontend/.env`):
 ```
 VITE_BACKEND_URL=http://localhost:8000
 ```
 
-### Step 6: Run Frontend Locally
-
-```bash
-cd projects/frontend
-npm install
-npm run dev
-# Visit http://localhost:5173
-```
-
----
-
-## Deploy to Production
-
-### Backend → Render
-
-1. Create a new **Web Service** on [render.com](https://render.com)
-2. Connect your GitHub repository
-3. Set **Root Directory**: `projects/backend`
-4. **Build Command**: `pip install -r requirements.txt`
-5. **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-6. Add environment variables in Render dashboard:
-   - `ALGORAND_APP_ID`
-   - `DEPLOYER_MNEMONIC`
-   - `FRONTEND_URL`
-
-### Frontend → Vercel
-
-1. Import repository on [vercel.com](https://vercel.com)
-2. Set **Root Directory**: `projects/frontend`
-3. Add environment variable: `VITE_BACKEND_URL` = your Render URL
-4. Deploy → get live URL
-
----
-
-## Smart Contract
-
-The GenMark contract is written in **Algorand Python (Puya)** and compiled with **AlgoKit**.
-
-### Key Features
-- **Box storage** for O(1) pHash lookup (no indexer dependency)
-- **Soulbound ASA** minted per registration (total=1, decimals=0, default_frozen=True)
-- **Immutable misuse flags** stored as individual boxes (cannot be deleted)
-- **ARC-4 ABI** methods with typed structs
-
-### Methods
-| Method | Description |
-|--------|-------------|
-| `register_content(phash, creator_name, platform, pay)` | Register image + mint ownership ASA |
-| `verify_content(phash)` | Look up origin record (read-only, free) |
-| `flag_misuse(phash, description, pay)` | File permanent misuse report |
-| `get_flag(phash, flag_index)` | Retrieve flag description (read-only) |
-
-### Run Tests
+### Deploy Smart Contract
 
 ```bash
 cd projects/contracts
-pytest tests/genmark_test.py -v
+poetry install
+algokit project run build
+algokit project deploy testnet
+# Copy printed App ID → set ALGORAND_APP_ID in backend .env
 ```
+
+### Fund Deployer Account
+
+Each registration costs 0.3 ALGO (covers box storage + ASA minting).
+Get free TestNet ALGO at: https://bank.testnet.algorand.network/
+
+Deployer address: `K3SFBBGKSEWGDW3Q4KAPKTI33ING3HLND5YSJVJH467MHA5K72FKCTXRDQ`
+
+### Production Deployment
+
+**Backend → Railway:**
+1. New Project → GitHub repo → Root Directory: `projects/backend`
+2. Add all backend env vars in Railway Variables tab
+3. Deploy → get Railway URL
+
+**Frontend → Vercel:**
+1. Import repo → Root Directory: `projects/frontend`
+2. Add `VITE_BACKEND_URL=<Railway URL>`
+3. Deploy → get Vercel URL
+4. Update `FRONTEND_URL` in Railway env vars
 
 ---
 
@@ -224,25 +263,18 @@ pytest tests/genmark_test.py -v
 
 | Layer | Technology |
 |-------|------------|
-| Smart Contract | Algorand Python (Puya), AlgoKit 2.0, ARC-4 |
-| Image Fingerprinting | imagehash pHash (64-bit perceptual hash) |
-| Backend | FastAPI, algosdk, ReportLab, Pillow |
+| Smart Contract | Algorand Python (Puya), AlgoKit, ARC-4 |
+| Image Fingerprinting | imagehash pHash (64-bit) + Pillow |
+| Backend | FastAPI, algosdk, ReportLab, Motor, Resend |
+| Auth | bcrypt (passlib) + JWT HS256 |
 | Frontend | React 18, TypeScript, TailwindCSS, React Router v7 |
 | Image Generation | Pollinations AI (free, no API key) |
-| Backend Hosting | Render (free tier) |
-| Frontend Hosting | Vercel (free tier) |
+| Backend Hosting | Railway (Docker) |
+| Frontend Hosting | Vercel |
+| Database | MongoDB Atlas M0 (free tier) |
 | Blockchain | Algorand TestNet via AlgoNode |
 
----
-
-## Why Algorand?
-
-- **4-second finality** — users don't wait for confirmations
-- **0.001 ALGO transactions** — negligible cost per registration
-- **Box storage** — native per-key storage without external database
-- **Puya Python** — readable, auditable smart contracts
-- **ASA standard** — native non-fungible soulbound tokens
-- **AlgoKit** — rapid development + one-command deployment
+**Total infrastructure cost: $0**
 
 ---
 

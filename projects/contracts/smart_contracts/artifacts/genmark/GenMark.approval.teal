@@ -7,40 +7,40 @@ main:
     bytecblock 0x151f7c75 "total_registrations" 0x7265675f 0x666c675f
     txn ApplicationID
     bnz main_after_if_else@2
-    // smart_contracts/genmark/contract.py:119
+    // smart_contracts/genmark/contract.py:127
     // self.total_registrations = UInt64(0)
     bytec_1 // "total_registrations"
     intc_1 // 0
     app_global_put
 
 main_after_if_else@2:
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txn NumAppArgs
     bz main_bare_routing@9
-    pushbytess 0x059c2981 0x1ef63646 0xf1a1fae1 0x7503fc9c // method "register_content(string,string,string,pay)uint64", method "verify_content(string)(bool,(string,address,string,uint64,uint64,uint64))", method "flag_misuse(string,string,pay)uint64", method "get_flag(string,uint64)string"
+    pushbytess 0x78f76945 0x77f622ac 0xf1a1fae1 0x7503fc9c // method "register_content(string,string,string,string,string,pay)uint64", method "verify_content(string)(bool,(string,address,string,uint64,uint64,uint64,string,string))", method "flag_misuse(string,string,pay)uint64", method "get_flag(string,uint64)string"
     txna ApplicationArgs 0
     match main_register_content_route@5 main_verify_content_route@6 main_flag_misuse_route@7 main_get_flag_route@8
 
 main_after_if_else@11:
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     intc_1 // 0
     return
 
 main_get_flag_route@8:
-    // smart_contracts/genmark/contract.py:336
+    // smart_contracts/genmark/contract.py:350
     // @abimethod(readonly=True)
     txn OnCompletion
     !
     assert // OnCompletion is not NoOp
     txn ApplicationID
     assert // can only call when not creating
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txna ApplicationArgs 1
     txna ApplicationArgs 2
-    // smart_contracts/genmark/contract.py:336
+    // smart_contracts/genmark/contract.py:350
     // @abimethod(readonly=True)
     callsub get_flag
     bytec_0 // 0x151f7c75
@@ -51,14 +51,14 @@ main_get_flag_route@8:
     return
 
 main_flag_misuse_route@7:
-    // smart_contracts/genmark/contract.py:277
+    // smart_contracts/genmark/contract.py:291
     // @abimethod()
     txn OnCompletion
     !
     assert // OnCompletion is not NoOp
     txn ApplicationID
     assert // can only call when not creating
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txna ApplicationArgs 1
     txna ApplicationArgs 2
@@ -70,7 +70,7 @@ main_flag_misuse_route@7:
     intc_0 // pay
     ==
     assert // transaction type is pay
-    // smart_contracts/genmark/contract.py:277
+    // smart_contracts/genmark/contract.py:291
     // @abimethod()
     callsub flag_misuse
     bytec_0 // 0x151f7c75
@@ -81,17 +81,17 @@ main_flag_misuse_route@7:
     return
 
 main_verify_content_route@6:
-    // smart_contracts/genmark/contract.py:225
+    // smart_contracts/genmark/contract.py:237
     // @abimethod(readonly=True)
     txn OnCompletion
     !
     assert // OnCompletion is not NoOp
     txn ApplicationID
     assert // can only call when not creating
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txna ApplicationArgs 1
-    // smart_contracts/genmark/contract.py:225
+    // smart_contracts/genmark/contract.py:237
     // @abimethod(readonly=True)
     callsub verify_content
     swap
@@ -107,18 +107,20 @@ main_verify_content_route@6:
     return
 
 main_register_content_route@5:
-    // smart_contracts/genmark/contract.py:125
+    // smart_contracts/genmark/contract.py:133
     // @abimethod()
     txn OnCompletion
     !
     assert // OnCompletion is not NoOp
     txn ApplicationID
     assert // can only call when not creating
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txna ApplicationArgs 1
     txna ApplicationArgs 2
     txna ApplicationArgs 3
+    txna ApplicationArgs 4
+    txna ApplicationArgs 5
     txn GroupIndex
     intc_0 // 1
     -
@@ -127,7 +129,7 @@ main_register_content_route@5:
     intc_0 // pay
     ==
     assert // transaction type is pay
-    // smart_contracts/genmark/contract.py:125
+    // smart_contracts/genmark/contract.py:133
     // @abimethod()
     callsub register_content
     bytec_0 // 0x151f7c75
@@ -138,7 +140,7 @@ main_register_content_route@5:
     return
 
 main_bare_routing@9:
-    // smart_contracts/genmark/contract.py:72
+    // smart_contracts/genmark/contract.py:80
     // class GenMark(ARC4Contract):
     txn OnCompletion
     bnz main_after_if_else@11
@@ -149,55 +151,57 @@ main_bare_routing@9:
     return
 
 
-// smart_contracts.genmark.contract.GenMark.register_content(phash: bytes, creator_name: bytes, platform: bytes, pay_txn: uint64) -> bytes:
+// smart_contracts.genmark.contract.GenMark.register_content(phash: bytes, creator_name: bytes, platform: bytes, original_phash: bytes, morphed_by: bytes, pay_txn: uint64) -> bytes:
 register_content:
-    // smart_contracts/genmark/contract.py:125-132
+    // smart_contracts/genmark/contract.py:133-142
     // @abimethod()
     // def register_content(
     //     self,
     //     phash: arc4.String,
     //     creator_name: arc4.String,
     //     platform: arc4.String,
+    //     original_phash: arc4.String,
+    //     morphed_by: arc4.String,
     //     pay_txn: gtxn.PaymentTransaction,
     // ) -> arc4.UInt64:
-    proto 4 1
-    // smart_contracts/genmark/contract.py:163-164
+    proto 6 1
+    // smart_contracts/genmark/contract.py:173-174
     // # ── Validate payment to cover on-chain storage costs ─────────────────
     // assert pay_txn.receiver == Global.current_application_address, (
     frame_dig -1
     gtxns Receiver
     global CurrentApplicationAddress
     ==
-    // smart_contracts/genmark/contract.py:163-166
+    // smart_contracts/genmark/contract.py:173-176
     // # ── Validate payment to cover on-chain storage costs ─────────────────
     // assert pay_txn.receiver == Global.current_application_address, (
     //     "Payment must be directed to the GenMark contract to fund box storage"
     // )
     assert // Payment must be directed to the GenMark contract to fund box storage
-    // smart_contracts/genmark/contract.py:167
-    // assert pay_txn.amount >= UInt64(100_000), (
+    // smart_contracts/genmark/contract.py:177
+    // assert pay_txn.amount >= UInt64(200_000), (
     frame_dig -1
     gtxns Amount
-    pushint 100000 // 100000
+    pushint 200000 // 200000
     >=
-    // smart_contracts/genmark/contract.py:167-169
-    // assert pay_txn.amount >= UInt64(100_000), (
-    //     "Minimum 0.1 ALGO (100,000 microAlgos) required for box MBR + ASA creation"
+    // smart_contracts/genmark/contract.py:177-179
+    // assert pay_txn.amount >= UInt64(200_000), (
+    //     "Minimum 0.2 ALGO (200,000 microAlgos) required for box MBR + ASA creation"
     // )
-    assert // Minimum 0.1 ALGO (100,000 microAlgos) required for box MBR + ASA creation
-    // smart_contracts/genmark/contract.py:171-174
+    assert // Minimum 0.2 ALGO (200,000 microAlgos) required for box MBR + ASA creation
+    // smart_contracts/genmark/contract.py:181-184
     // # ── Prevent duplicate registrations (backdating attack mitigation) ───
     // # Each perceptual hash can only be registered once. Any attempt to register
     // # the same fingerprint twice is rejected, ensuring temporal integrity.
     // assert phash not in self.registry, (
     bytec_2 // 0x7265675f
-    frame_dig -4
+    frame_dig -6
     concat
     dup
     box_len
     bury 1
     !
-    // smart_contracts/genmark/contract.py:171-176
+    // smart_contracts/genmark/contract.py:181-186
     // # ── Prevent duplicate registrations (backdating attack mitigation) ───
     // # Each perceptual hash can only be registered once. Any attempt to register
     // # the same fingerprint twice is rejected, ensuring temporal integrity.
@@ -205,7 +209,7 @@ register_content:
     //     "This content fingerprint has already been registered on GenMark"
     // )
     assert // This content fingerprint has already been registered on GenMark
-    // smart_contracts/genmark/contract.py:178-200
+    // smart_contracts/genmark/contract.py:188-210
     // # ── Mint soulbound ownership credential ASA ───────────────────────────
     // # An inner transaction creates a non-transferable ASA bound to this content.
     // # The ASA ID serves as the certificate number in forensic documentation.
@@ -230,43 +234,43 @@ register_content:
     //     fee=0,
     // ).submit()
     itxn_begin
-    // smart_contracts/genmark/contract.py:192-194
+    // smart_contracts/genmark/contract.py:202-204
     // # Assigning all control roles to the contract makes this ASA soulbound:
     // # no external wallet can manage, freeze, or clawback this asset
     // manager=Global.current_application_address,
     global CurrentApplicationAddress
-    // smart_contracts/genmark/contract.py:195-196
+    // smart_contracts/genmark/contract.py:205-206
     // freeze=Global.current_application_address,
     // clawback=Global.current_application_address,
     dupn 2
     itxn_field ConfigAssetClawback
     itxn_field ConfigAssetFreeze
     itxn_field ConfigAssetManager
-    // smart_contracts/genmark/contract.py:191
+    // smart_contracts/genmark/contract.py:201
     // url=b"https://genmark.app",  # Reference URL for additional metadata
     pushbytes 0x68747470733a2f2f67656e6d61726b2e617070
     itxn_field ConfigAssetURL
-    // smart_contracts/genmark/contract.py:190
+    // smart_contracts/genmark/contract.py:200
     // unit_name=b"GMC",  # Ticker symbol for wallet/explorer display
     pushbytes 0x474d43
     itxn_field ConfigAssetUnitName
-    // smart_contracts/genmark/contract.py:189
+    // smart_contracts/genmark/contract.py:199
     // asset_name=b"GenMark Certificate",  # Human-readable name
     pushbytes 0x47656e4d61726b204365727469666963617465
     itxn_field ConfigAssetName
-    // smart_contracts/genmark/contract.py:188
+    // smart_contracts/genmark/contract.py:198
     // default_frozen=True,  # Recipients are frozen — cannot transact
     intc_0 // 1
     itxn_field ConfigAssetDefaultFrozen
-    // smart_contracts/genmark/contract.py:187
+    // smart_contracts/genmark/contract.py:197
     // decimals=0,  # Indivisible: no fractional ownership
     intc_1 // 0
     itxn_field ConfigAssetDecimals
-    // smart_contracts/genmark/contract.py:186
+    // smart_contracts/genmark/contract.py:196
     // total=1,  # Non-fungible: exactly one unit exists in the universe
     intc_0 // 1
     itxn_field ConfigAssetTotal
-    // smart_contracts/genmark/contract.py:178-185
+    // smart_contracts/genmark/contract.py:188-195
     // # ── Mint soulbound ownership credential ASA ───────────────────────────
     // # An inner transaction creates a non-transferable ASA bound to this content.
     // # The ASA ID serves as the certificate number in forensic documentation.
@@ -277,13 +281,13 @@ register_content:
     // asset_result = itxn.AssetConfig(
     pushint 3 // acfg
     itxn_field TypeEnum
-    // smart_contracts/genmark/contract.py:197-199
+    // smart_contracts/genmark/contract.py:207-209
     // # fee=0 means this fee is pooled from the outer transaction.
     // # Callers must set outer_txn.fee = 2 * min_fee to cover this inner txn.
     // fee=0,
     intc_1 // 0
     itxn_field Fee
-    // smart_contracts/genmark/contract.py:178-200
+    // smart_contracts/genmark/contract.py:188-210
     // # ── Mint soulbound ownership credential ASA ───────────────────────────
     // # An inner transaction creates a non-transferable ASA bound to this content.
     // # The ASA ID serves as the certificate number in forensic documentation.
@@ -309,59 +313,83 @@ register_content:
     // ).submit()
     itxn_submit
     itxn CreatedAssetID
-    // smart_contracts/genmark/contract.py:209
-    // creator_address=arc4.Address(Txn.sender),  # Caller's wallet address
+    // smart_contracts/genmark/contract.py:219
+    // creator_address=arc4.Address(Txn.sender),
     txn Sender
-    // smart_contracts/genmark/contract.py:211
-    // timestamp=arc4.UInt64(Global.latest_timestamp),  # Block timestamp
+    // smart_contracts/genmark/contract.py:221
+    // timestamp=arc4.UInt64(Global.latest_timestamp),
     global LatestTimestamp
     itob
-    // smart_contracts/genmark/contract.py:212
-    // asa_id=arc4.UInt64(asset_id),  # Ownership credential reference
+    // smart_contracts/genmark/contract.py:222
+    // asa_id=arc4.UInt64(asset_id),
     uncover 2
     itob
-    // smart_contracts/genmark/contract.py:204-214
+    // smart_contracts/genmark/contract.py:214-226
     // # ── Write permanent registration record to box storage ────────────────
     // # Box key = b"reg_" + arc4_encode(phash)
     // # This creates an immutable on-chain record that anyone can query forever.
     // self.registry[phash] = ContentRecord(
     //     creator_name=creator_name,
-    //     creator_address=arc4.Address(Txn.sender),  # Caller's wallet address
+    //     creator_address=arc4.Address(Txn.sender),
     //     platform=platform,
-    //     timestamp=arc4.UInt64(Global.latest_timestamp),  # Block timestamp
-    //     asa_id=arc4.UInt64(asset_id),  # Ownership credential reference
-    //     flag_count=arc4.UInt64(0),  # No misuse reports at registration time
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     asa_id=arc4.UInt64(asset_id),
+    //     flag_count=arc4.UInt64(0),
+    //     original_phash=original_phash,  # Empty string for original content
+    //     morphed_by=morphed_by,          # Empty string for original content
     // )
-    frame_dig -3
+    frame_dig -5
     len
-    pushint 60 // 60
+    pushint 64 // 64
     +
-    pushbytes 0x003c
+    pushbytes 0x0040
     uncover 4
     concat
-    swap
+    dig 1
     itob
     extract 6 2
     concat
+    frame_dig -4
+    len
     uncover 2
+    +
+    swap
+    uncover 3
     concat
-    dig 1
+    dig 2
     concat
-    // smart_contracts/genmark/contract.py:213
-    // flag_count=arc4.UInt64(0),  # No misuse reports at registration time
+    // smart_contracts/genmark/contract.py:223
+    // flag_count=arc4.UInt64(0),
     pushbytes 0x0000000000000000
-    // smart_contracts/genmark/contract.py:204-214
+    // smart_contracts/genmark/contract.py:214-226
     // # ── Write permanent registration record to box storage ────────────────
     // # Box key = b"reg_" + arc4_encode(phash)
     // # This creates an immutable on-chain record that anyone can query forever.
     // self.registry[phash] = ContentRecord(
     //     creator_name=creator_name,
-    //     creator_address=arc4.Address(Txn.sender),  # Caller's wallet address
+    //     creator_address=arc4.Address(Txn.sender),
     //     platform=platform,
-    //     timestamp=arc4.UInt64(Global.latest_timestamp),  # Block timestamp
-    //     asa_id=arc4.UInt64(asset_id),  # Ownership credential reference
-    //     flag_count=arc4.UInt64(0),  # No misuse reports at registration time
+    //     timestamp=arc4.UInt64(Global.latest_timestamp),
+    //     asa_id=arc4.UInt64(asset_id),
+    //     flag_count=arc4.UInt64(0),
+    //     original_phash=original_phash,  # Empty string for original content
+    //     morphed_by=morphed_by,          # Empty string for original content
     // )
+    concat
+    dig 1
+    itob
+    extract 6 2
+    concat
+    frame_dig -3
+    len
+    uncover 2
+    +
+    itob
+    extract 6 2
+    concat
+    frame_dig -5
+    concat
+    frame_dig -4
     concat
     frame_dig -3
     concat
@@ -373,7 +401,7 @@ register_content:
     uncover 2
     swap
     box_put
-    // smart_contracts/genmark/contract.py:216-217
+    // smart_contracts/genmark/contract.py:228-229
     // # ── Increment global registration counter ─────────────────────────────
     // self.total_registrations += UInt64(1)
     intc_1 // 0
@@ -385,21 +413,21 @@ register_content:
     bytec_1 // "total_registrations"
     swap
     app_global_put
-    // smart_contracts/genmark/contract.py:219
+    // smart_contracts/genmark/contract.py:231
     // return arc4.UInt64(asset_id)
     retsub
 
 
 // smart_contracts.genmark.contract.GenMark.verify_content(phash: bytes) -> bytes, bytes:
 verify_content:
-    // smart_contracts/genmark/contract.py:225-229
+    // smart_contracts/genmark/contract.py:237-241
     // @abimethod(readonly=True)
     // def verify_content(
     //     self,
     //     phash: arc4.String,
     // ) -> tuple[arc4.Bool, ContentRecord]:
     proto 1 2
-    // smart_contracts/genmark/contract.py:257
+    // smart_contracts/genmark/contract.py:269
     // if phash in self.registry:
     bytec_2 // 0x7265675f
     frame_dig -1
@@ -408,7 +436,7 @@ verify_content:
     box_len
     bury 1
     bz verify_content_after_if_else@2
-    // smart_contracts/genmark/contract.py:258-259
+    // smart_contracts/genmark/contract.py:270-271
     // # ── Content found: return full provenance record ───────────────────
     // return arc4.Bool(True), self.registry[phash].copy()
     frame_dig 0
@@ -420,7 +448,7 @@ verify_content:
     retsub
 
 verify_content_after_if_else@2:
-    // smart_contracts/genmark/contract.py:261-271
+    // smart_contracts/genmark/contract.py:273-285
     // # ── Content not found: return sentinel empty record ───────────────────
     // # The caller should check the Bool flag before using the record fields.
     // # Global.zero_address is the 32-byte zero address used as a null placeholder.
@@ -431,15 +459,17 @@ verify_content_after_if_else@2:
     //     timestamp=arc4.UInt64(0),
     //     asa_id=arc4.UInt64(0),
     //     flag_count=arc4.UInt64(0),
+    //     original_phash=arc4.String(""),
+    //     morphed_by=arc4.String(""),
     // )
-    pushbytess 0x00 base32(AA6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA) // 0x00, base32(AA6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA)
+    pushbytess 0x00 base32(ABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCAARQAAAAAAAAAAAAA) // 0x00, base32(ABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABCAARQAAAAAAAAAAAAA)
     uncover 2
     retsub
 
 
 // smart_contracts.genmark.contract.GenMark.flag_misuse(phash: bytes, description: bytes, pay_txn: uint64) -> bytes:
 flag_misuse:
-    // smart_contracts/genmark/contract.py:277-283
+    // smart_contracts/genmark/contract.py:291-297
     // @abimethod()
     // def flag_misuse(
     //     self,
@@ -448,7 +478,7 @@ flag_misuse:
     //     pay_txn: gtxn.PaymentTransaction,
     // ) -> arc4.UInt64:
     proto 3 1
-    // smart_contracts/genmark/contract.py:309-310
+    // smart_contracts/genmark/contract.py:323-324
     // # ── Verify the content exists before allowing flagging ────────────────
     // assert phash in self.registry, "Cannot file a misuse report: content not registered on GenMark"
     bytec_2 // 0x7265675f
@@ -458,31 +488,31 @@ flag_misuse:
     box_len
     bury 1
     assert // Cannot file a misuse report: content not registered on GenMark
-    // smart_contracts/genmark/contract.py:312-313
+    // smart_contracts/genmark/contract.py:326-327
     // # ── Validate payment for flag box storage costs ───────────────────────
     // assert pay_txn.receiver == Global.current_application_address, (
     frame_dig -1
     gtxns Receiver
     global CurrentApplicationAddress
     ==
-    // smart_contracts/genmark/contract.py:312-315
+    // smart_contracts/genmark/contract.py:326-329
     // # ── Validate payment for flag box storage costs ───────────────────────
     // assert pay_txn.receiver == Global.current_application_address, (
     //     "Payment must be directed to the GenMark contract"
     // )
     assert // Payment must be directed to the GenMark contract
-    // smart_contracts/genmark/contract.py:316
+    // smart_contracts/genmark/contract.py:330
     // assert pay_txn.amount >= UInt64(50_000), (
     frame_dig -1
     gtxns Amount
     pushint 50000 // 50000
     >=
-    // smart_contracts/genmark/contract.py:316-318
+    // smart_contracts/genmark/contract.py:330-332
     // assert pay_txn.amount >= UInt64(50_000), (
     //     "Minimum 0.05 ALGO (50,000 microAlgos) required for flag box storage"
     // )
     assert // Minimum 0.05 ALGO (50,000 microAlgos) required for flag box storage
-    // smart_contracts/genmark/contract.py:320-321
+    // smart_contracts/genmark/contract.py:334-335
     // # ── Determine sequential flag index ───────────────────────────────────
     // flag_index = self.registry[phash].flag_count.native
     dup
@@ -490,7 +520,7 @@ flag_misuse:
     assert // check self.registry entry exists
     pushint 52 // 52
     extract_uint64
-    // smart_contracts/genmark/contract.py:323-324
+    // smart_contracts/genmark/contract.py:337-338
     // # ── Store flag description in a dedicated namespaced box ──────────────
     // flag_box_key = Bytes(b"flg_") + phash.bytes + op.itob(flag_index)
     bytec_3 // 0x666c675f
@@ -501,11 +531,11 @@ flag_misuse:
     swap
     dig 1
     concat
-    // smart_contracts/genmark/contract.py:325
+    // smart_contracts/genmark/contract.py:339
     // op.Box.put(flag_box_key, description.bytes)
     frame_dig -2
     box_put
-    // smart_contracts/genmark/contract.py:327-328
+    // smart_contracts/genmark/contract.py:341-342
     // # ── Increment flag count in the registration record ───────────────────
     // self.registry[phash].flag_count = arc4.UInt64(flag_index + UInt64(1))
     swap
@@ -523,14 +553,14 @@ flag_misuse:
     uncover 2
     swap
     box_put
-    // smart_contracts/genmark/contract.py:330
+    // smart_contracts/genmark/contract.py:344
     // return arc4.UInt64(flag_index)
     retsub
 
 
 // smart_contracts.genmark.contract.GenMark.get_flag(phash: bytes, flag_index: bytes) -> bytes:
 get_flag:
-    // smart_contracts/genmark/contract.py:336-341
+    // smart_contracts/genmark/contract.py:350-355
     // @abimethod(readonly=True)
     // def get_flag(
     //     self,
@@ -538,7 +568,7 @@ get_flag:
     //     flag_index: arc4.UInt64,
     // ) -> arc4.String:
     proto 2 1
-    // smart_contracts/genmark/contract.py:358
+    // smart_contracts/genmark/contract.py:372
     // flag_box_key = Bytes(b"flg_") + phash.bytes + op.itob(flag_index.native)
     bytec_3 // 0x666c675f
     frame_dig -2
@@ -547,12 +577,12 @@ get_flag:
     btoi
     itob
     concat
-    // smart_contracts/genmark/contract.py:359
+    // smart_contracts/genmark/contract.py:373
     // flag_bytes, flag_exists = op.Box.get(flag_box_key)
     box_get
-    // smart_contracts/genmark/contract.py:360
+    // smart_contracts/genmark/contract.py:374
     // assert flag_exists, "Flag not found at the specified index"
     assert // Flag not found at the specified index
-    // smart_contracts/genmark/contract.py:361
+    // smart_contracts/genmark/contract.py:375
     // return arc4.String.from_bytes(flag_bytes)
     retsub

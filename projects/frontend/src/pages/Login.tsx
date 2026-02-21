@@ -5,7 +5,8 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
 
 export default function Login() {
   const { isLoggedIn, login } = useAuth()
-  const [tab, setTab] = useState<'login' | 'signup'>('login')
+  const initialTab = new URLSearchParams(window.location.search).get('tab') === 'signup' ? 'signup' : 'login'
+  const [tab, setTab] = useState<'login' | 'signup'>(initialTab)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')

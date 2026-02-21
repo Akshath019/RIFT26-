@@ -83,6 +83,58 @@ function FlagModal({ phash, backendUrl, onSuccess, onClose }: FlagModalProps) {
   )
 }
 
+function ProvenanceTimeline({ chain, currentPhash }: { chain: import('../pages/Verify').ProvenanceStep[]; currentPhash?: string }) {
+  return (
+    <div className="px-6 py-5 border-b border-white/10">
+      <p className="text-xs text-white/30 uppercase tracking-wide font-medium mb-4">
+        Provenance Chain · <span className="text-white/20">{chain.length} step{chain.length !== 1 ? 's' : ''} · on-chain</span>
+      </p>
+      <div className="space-y-0">
+        {chain.map((step, i) => {
+          const isLast = i === chain.length - 1
+          const isCurrent = step.phash === currentPhash
+          const isOrigin = step.is_original
+          // Who to show: original steps show creator_name; morph steps show morphed_by (the person who did the work)
+          const displayName = isOrigin ? step.creator_name : (step.morphed_by || step.creator_name)
+          const role = isOrigin ? 'Original Creator' : 'Morphed by'
+
+          return (
+            <div key={step.phash + i} className="flex gap-4">
+              {/* dot + connector */}
+              <div className="flex flex-col items-center flex-shrink-0">
+                <div className={`relative z-10 h-7 w-7 rounded-full border-2 flex items-center justify-center text-[10px] ${
+                  isOrigin
+                    ? 'border-indigo-400 bg-indigo-500/20 text-indigo-300'
+                    : isCurrent
+                    ? 'border-emerald-400 bg-emerald-500/20 text-emerald-300'
+                    : 'border-violet-400/50 bg-violet-500/10 text-violet-300'
+                }`}>
+                  {isOrigin ? '★' : '↻'}
+                </div>
+                {!isLast && <div className="flex-1 w-px bg-white/10 my-1 min-h-[20px]" />}
+              </div>
+
+              {/* content */}
+              <div className={`flex-1 min-w-0 ${isLast ? 'pb-0' : 'pb-5'}`}>
+                <span className={`text-[10px] font-semibold uppercase tracking-widest ${
+                  isOrigin ? 'text-indigo-400' : isCurrent ? 'text-emerald-400' : 'text-violet-400'
+                }`}>
+                  {role}{isCurrent ? ' · this image' : ''}
+                </span>
+                <p className="text-sm text-white font-semibold mt-0.5">{displayName}</p>
+                {step.timestamp && (
+                  <p className="text-[11px] text-white/25 mt-0.5">{step.timestamp}</p>
+                )}
+                <p className="text-[10px] text-white/15 font-mono mt-0.5 truncate">{step.phash}</p>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function ResultCard({ result, backendUrl }: ResultCardProps) {
   const [showFlagModal, setShowFlagModal] = useState(false)
   const [flagSuccess, setFlagSuccess] = useState<string | null>(null)
@@ -108,6 +160,9 @@ export default function ResultCard({ result, backendUrl }: ResultCardProps) {
           app_id: String(result.app_id || ''),
           phash: result.phash || '',
           flag_descriptions: [],
+          modified_by: result.morphed_by || null,
+          original_phash: result.original_phash || null,
+          provenance_chain: result.provenance_chain || [],
         }),
       })
       if (!response.ok) throw new Error(`Certificate generation failed (${response.status})`)
@@ -162,28 +217,66 @@ export default function ResultCard({ result, backendUrl }: ResultCardProps) {
       <div className="rounded-2xl border border-emerald-500/20 bg-black overflow-hidden">
 
         {/* Header */}
-        <div className="bg-gradient-to-r from-emerald-600/80 to-teal-600/80 px-6 py-4 flex items-center gap-3 border-b border-white/10">
+        <div className={`bg-gradient-to-r ${result.morphed_by ? 'from-violet-600/80 to-purple-600/80' : 'from-emerald-600/80 to-teal-600/80'} px-6 py-4 flex items-center gap-3 border-b border-white/10`}>
           <div className="rounded-xl bg-white/20 p-2 flex-shrink-0">
-            <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            {result.morphed_by ? (
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
           </div>
           <div>
-            <h3 className="font-bold text-white text-base leading-tight">Verified Original</h3>
-            <p className="text-white/60 text-xs mt-0.5">Certified origin found on Algorand</p>
+            <h3 className="font-bold text-white text-base leading-tight">
+              {result.morphed_by ? 'Derived Content' : 'Verified Original'}
+            </h3>
+            <p className="text-white/60 text-xs mt-0.5">
+              {result.morphed_by ? 'Morphed derivative — certified on Algorand' : 'Certified origin found on Algorand'}
+            </p>
           </div>
         </div>
+
+        {/* Modification banner — only show if no multi-step chain (chain renders below instead) */}
+        {(result.is_modification || result.morphed_by) && (!result.provenance_chain || result.provenance_chain.length <= 1) && (
+          <div className="mx-6 mt-4 rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3 flex items-start gap-3">
+            <span className="text-violet-400 text-base flex-shrink-0 mt-0.5">🔄</span>
+            <div>
+              <p className="text-violet-300 text-sm font-semibold">Derivative Content</p>
+              <p className="text-violet-200/60 text-xs mt-0.5">
+                Originally created by{' '}
+                <span className="text-violet-300 font-medium">{result.creator_name || 'another creator'}</span>
+                {result.morphed_by
+                  ? result.creator_name === result.morphed_by
+                    ? ` · self-modified by ${result.morphed_by}`
+                    : ` · morphed by ${result.morphed_by}`
+                  : ''}.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Origin details */}
         <div className="px-6 py-5 space-y-4 border-b border-white/10">
           {[
-            { label: 'Creator', value: result.creator_name, icon: '👤' },
-            { label: 'Platform', value: result.platform, icon: '🎨' },
+            { label: 'Original Creator', value: result.creator_name, icon: '👤' },
+            ...(result.morphed_by
+              ? [{
+                  label: 'Morphed By',
+                  value: result.creator_name === result.morphed_by
+                    ? `${result.morphed_by} (self-modification)`
+                    : result.morphed_by,
+                  icon: '🔄',
+                }]
+              : []),
+            { label: 'Platform', value: result.platform, icon: '🖥' },
             { label: 'Certified On', value: result.timestamp, icon: '🕐' },
             ...(result.flag_count !== undefined && result.flag_count > 0
               ? [{ label: 'Misuse Reports', value: `${result.flag_count} report(s) filed`, icon: '⚠️' }]
               : []),
-          ].map(({ label, value, icon }) => (
+          ].filter(r => r.value).map(({ label, value, icon }) => (
             <div key={label} className="flex items-start gap-3">
               <span className="text-base flex-shrink-0 mt-0.5">{icon}</span>
               <div>
@@ -193,6 +286,11 @@ export default function ResultCard({ result, backendUrl }: ResultCardProps) {
             </div>
           ))}
         </div>
+
+        {/* Provenance chain timeline */}
+        {result.provenance_chain && result.provenance_chain.length > 1 && (
+          <ProvenanceTimeline chain={result.provenance_chain} currentPhash={result.phash} />
+        )}
 
         {/* Action buttons */}
         <div className="px-6 py-4 flex flex-col gap-3">

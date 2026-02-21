@@ -9,20 +9,23 @@ even if the image was cropped, compressed, or resized.
 
 **Monorepo structure (AlgoKit):**
 - `projects/contracts/` — Algorand Python smart contracts (Puya)
-- `projects/backend/` — FastAPI backend (pHash, blockchain calls, PDF certs)
-- `projects/frontend/` — React + TailwindCSS frontend (two pages)
+- `projects/backend/` — FastAPI backend (pHash, blockchain calls, PDF certs, auth)
+- `projects/frontend/` — React + TailwindCSS frontend (4 pages)
 
 ---
 
-## Current State (2026-02-20)
+## Current State (2026-02-21)
 
 - Frontend: RUNNING at localhost:5173 / Vercel
 - Backend: RUNNING at localhost:8000 / Railway
 - Contract: COMPILED and DEPLOYED on TestNet
-- Auth: ADDED — MongoDB Atlas signup/login with JWT
-- Certificate: SIMPLIFIED — clean 1-page PDF (creator name + date)
-- Generate page: GATED — login required to generate images
-- Image generation: WORKING (Picsum Photos, free, deterministic)
+- App ID: **755880383**
+- Auth: MongoDB Atlas signup/login with JWT (7-day tokens)
+- Certificate: Clean 1-page PDF with provenance chain
+- Generate page: Login-gated — requires JWT token
+- Morph page: Upload any image, apply transform, register derivative on-chain
+- Verify page: Public — no login required, shows full provenance chain
+- Notifications: Resend email — alerts creator when their content is flagged
 
 ---
 
@@ -32,19 +35,16 @@ even if the image was cropped, compressed, or resized.
 
 ```bash
 # 1. Node.js v18+ (for frontend)
-#    Download from https://nodejs.org or use nvm:
 nvm install 18 && nvm use 18
 
 # 2. Python 3.12+ (for backend and contracts)
-#    Download from https://python.org
+# Download from https://python.org
 
 # 3. AlgoKit CLI (for contracts)
 pip install algokit
 
 # 4. Poetry (for contracts dependency management)
 pip install poetry
-# or on Windows:
-# (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
 ```
 
 ---
@@ -52,20 +52,10 @@ pip install poetry
 ### Frontend — React + TailwindCSS
 
 ```bash
-# Navigate to frontend project
 cd projects/frontend
-
-# Install all npm dependencies (first time or after package.json changes)
 npm install
-
-# Start development server at http://localhost:5173
-npm run dev
-
-# Build for production (outputs to dist/)
-npm run build
-
-# Preview production build locally
-npm run preview
+npm run dev       # http://localhost:5173
+npm run build     # production build → dist/
 ```
 
 **Required env file** (`projects/frontend/.env`):
@@ -78,47 +68,25 @@ VITE_BACKEND_URL=http://localhost:8000
 ### Backend — FastAPI + pHash + Algorand
 
 ```bash
-# Navigate to backend project
 cd projects/backend
-
-# (Recommended) Create a virtual environment first
 python -m venv venv
 source venv/bin/activate          # Linux/Mac
 venv\Scripts\activate             # Windows
-
-# Install all Python dependencies
 pip install -r requirements.txt
-
-# Start development server at http://localhost:8000 (auto-reloads on save)
 uvicorn main:app --reload --port 8000
-
-# API docs (Swagger UI) available at:
-#   http://localhost:8000/docs
-# ReDoc available at:
-#   http://localhost:8000/redoc
+# Swagger UI: http://localhost:8000/docs
 ```
-
-**Key packages installed by `requirements.txt`:**
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `fastapi` | 0.115.6 | Web framework |
-| `uvicorn[standard]` | 0.34.0 | ASGI server |
-| `Pillow` | 11.1.0 | Image decoding (JPEG, PNG, WebP…) |
-| `ImageHash` | 4.3.1 | Perceptual hash (pHash) algorithm |
-| `py-algorand-sdk` | latest | Algorand blockchain calls |
-| `httpx` | 0.28.1 | Async HTTP (fetch images from URLs) |
-| `reportlab` | 4.2.5 | PDF certificate generation |
-| `python-multipart` | 0.0.20 | File upload support in FastAPI |
-| `python-dotenv` | 1.0.1 | Load `.env` file |
 
 **Required env file** (`projects/backend/.env`):
 ```
 ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
 ALGORAND_ALGOD_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-ALGORAND_APP_ID=<number from deploy>
+ALGORAND_APP_ID=755880383
 DEPLOYER_MNEMONIC=<your 25-word mnemonic>
 FRONTEND_URL=http://localhost:5173
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/genmark
+JWT_SECRET_KEY=<random 32+ char string>
+RESEND_API_KEY=<optional — Resend API key for misuse email alerts>
 ```
 
 ---
@@ -126,21 +94,10 @@ FRONTEND_URL=http://localhost:5173
 ### Smart Contracts — Algorand Python (Puya)
 
 ```bash
-# Navigate to contracts project
 cd projects/contracts
-
-# Install Python dependencies via Poetry
 poetry install
-
-# Compile smart contracts → generates artifacts in smart_contracts/artifacts/
 poetry run python -m smart_contracts build
-# or:
-algokit project run build
-
-# Deploy to Algorand TestNet (prints App ID — copy it to backend .env)
 algokit project deploy testnet
-
-# Run contract tests
 poetry run pytest tests/
 ```
 
@@ -153,27 +110,14 @@ DISPENSER_MNEMONIC=<your 25-word mnemonic>
 
 ---
 
-### Algorand Account Management
-
-```bash
-# Fund a TestNet address with free ALGO from the faucet
-algokit dispenser login                        # Opens browser — sign in with GitHub
-algokit dispenser fund --receiver <ADDRESS> --amount 10000000  # Sends 10 ALGO
-
-# Check account balance
-algokit goal account info --address <ADDRESS>
-```
-
----
-
-### Full Start Sequence (fresh machine)
+### Full Start Sequence
 
 ```bash
 # Terminal 1 — Backend
 cd projects/backend
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-# create .env file with DEPLOYER_MNEMONIC, ALGORAND_APP_ID, MONGODB_URI, JWT_SECRET_KEY
+# create .env with DEPLOYER_MNEMONIC, ALGORAND_APP_ID, MONGODB_URI, JWT_SECRET_KEY
 uvicorn main:app --reload --port 8000
 
 # Terminal 2 — Frontend
@@ -193,12 +137,14 @@ Written in **Algorand Python (Puya)**. Key design:
 
 ```python
 class ContentRecord(arc4.Struct):
-    creator_name:    arc4.String
+    creator_name:    arc4.String   # Original content creator, propagated through chain
     creator_address: arc4.Address  # 32-byte on-chain address
-    platform:        arc4.String
+    platform:        arc4.String   # Platform/tool name
     timestamp:       arc4.UInt64   # Unix seconds
     asa_id:          arc4.UInt64   # Soulbound certificate ASA
     flag_count:      arc4.UInt64   # Misuse report count
+    original_phash:  arc4.String   # Parent pHash; empty string if this is original content
+    morphed_by:      arc4.String   # Name of who morphed this; empty string if original
 
 class GenMark(ARC4Contract):
     total_registrations: UInt64
@@ -207,130 +153,107 @@ class GenMark(ARC4Contract):
 ```
 
 **ABI Methods:**
-- `register_content(phash, creator_name, platform, pay) → uint64` — creates box + mints ASA
-- `verify_content(phash) → (bool, ContentRecord)` — read-only lookup
-- `flag_misuse(phash, description, pay) → uint64` — immutable misuse report
-- `get_flag(phash, flag_index) → string` — read-only flag retrieval
+- `register_content(phash, creator_name, platform, original_phash, morphed_by, pay) → uint64`
+- `verify_content(phash) → (bool, ContentRecord)` — read-only
+- `flag_misuse(phash, description, pay) → uint64`
+- `get_flag(phash, flag_index) → string` — read-only
+
+**CONTENT_RECORD_TYPE (for algosdk):**
+```python
+"(string,address,string,uint64,uint64,uint64,string,string)"
+# indices: 0=creator_name, 1=creator_address, 2=platform, 3=timestamp,
+#          4=asa_id, 5=flag_count, 6=original_phash, 7=morphed_by
+```
 
 ### Backend (`projects/backend/`)
 FastAPI service — the **ONLY** component that touches the blockchain.
 
-- `main.py` — endpoints: `/api/register`, `/api/verify`, `/api/flag`, `/api/certificate`
-- `hashing.py` — `imagehash.phash()` for perceptual fingerprinting
-- `algorand.py` — `algosdk` AtomicTransactionComposer ABI calls
-- `certificate.py` — `reportlab` PDF forensic certificate generation
+| File | Purpose |
+|------|---------|
+| `main.py` | API endpoints: register, verify, flag, certificate, morph, auth |
+| `algorand.py` | algosdk AtomicTransactionComposer ABI calls with retry logic |
+| `hashing.py` | `imagehash.phash()` perceptual fingerprinting |
+| `certificate.py` | ReportLab PDF forensic certificate generation |
+| `auth.py` | MongoDB Atlas users + bcrypt + JWT |
+| `notifications.py` | Resend API email alerts on misuse flagging |
+
+**Provenance chain walking** (`main.py`):
+```python
+def build_provenance_chain_from_blockchain(phash: str) -> list:
+    """Walks original_phash links on-chain, returns oldest-first list."""
+    # Each step: {phash, creator_name, morphed_by, timestamp, is_original}
+    # chain.reverse() at the end → original creator first
+```
+
+**Retry logic** (`algorand.py`):
+- `register_content_on_chain`: 3 attempts, 4-second wait between retries on timeout
+- `verify_content_on_chain`: 2 attempts, 2-second wait on timeout
 
 ### Frontend (`projects/frontend/src/`)
 React + TailwindCSS. **Zero blockchain code** — all Algorand calls go through the backend.
 
-- `App.tsx` — React Router v7 with two routes
-- `pages/Generate.tsx` — AI image generation + silent registration
-- `pages/Verify.tsx` — public verification portal
-- `components/DropZone.tsx` — drag-and-drop image upload
-- `components/ResultCard.tsx` — Verified/Not Found card + misuse modal
-- `components/StampBadge.tsx` — "Content Certified ✓" overlay badge
+| File | Purpose |
+|------|---------|
+| `App.tsx` | React Router v7 — 4 routes + ProtectedRoute |
+| `pages/Login.tsx` | Signup / Login with JWT |
+| `pages/Generate.tsx` | AI image generation (Pollinations) + silent registration |
+| `pages/Morph.tsx` | Upload → transform → register derivative with provenance |
+| `pages/Verify.tsx` | Public verification portal with ProvenanceTimeline |
+| `components/ResultCard.tsx` | Verified/Not Found card + misuse modal |
+| `components/StampBadge.tsx` | "Content Certified ✓" overlay badge |
+| `components/DropZone.tsx` | Drag-and-drop image upload |
 
 ### Image Generation
-Uses **Pollinations AI** — completely free, no API key needed:
+Uses **Pollinations AI** — completely free, no API key:
 ```
-https://image.pollinations.ai/prompt/{encoded_prompt}?width=512&height=512&nologo=true&seed=42
+https://image.pollinations.ai/prompt/{encoded}?width=512&height=512&nologo=true&seed=42
 ```
 Fixed seed=42 ensures same prompt → same image → same pHash (deterministic).
+Falls back to LoremFlickr if Pollinations fails.
+
+### Morph Pipeline (`/api/morph`)
+1. Upload image → compute original pHash
+2. Query blockchain for origin record + walk full provenance chain
+3. Apply Pillow transform (brightness/contrast/saturation/blur/rotate/crop)
+4. Compute morphed pHash → compute Hamming distance
+5. Return: original_phash, morphed_phash, hamming_distance, original_registered,
+   original_creator, original_morphed_by, provenance_chain, morphed_image_b64
+
+**pHash collision detection:**
+- If `hamming_distance === 0`: morph was too subtle — same fingerprint as original
+- Frontend blocks registration with warning: "Pick Rotate or Blur for a stronger transform"
+- Backend sets `phash_collision_with_original: true` in already_registered response
 
 ---
 
-## Environment Files
+## Puya Compiler Rules (CRITICAL)
 
-### Backend (`projects/backend/.env`) — CREATED:
-```
-ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud
-ALGORAND_ALGOD_TOKEN=aaaa...aaaa (64 a's — AlgoNode accepts any token)
-ALGORAND_APP_ID=<deployed app id>
-DEPLOYER_MNEMONIC=birth heart ... medal (25 words)
-FRONTEND_URL=http://localhost:5173
-MONGODB_URI=mongodb+srv://<user>:<pass>@cluster.mongodb.net/genmark  ← MongoDB Atlas
-JWT_SECRET_KEY=<random 32+ char string>  ← JWT signing secret
-```
-
-#### MongoDB Atlas Setup (one-time, free):
-1. **mongodb.com/atlas** → Create free account → New Project → Create M0 cluster (free tier)
-2. **Database Access** → Add Database User → username + password → Read/Write
-3. **Network Access** → Add IP → `0.0.0.0/0` (allow all — required for Railway)
-4. **Connect** → Drivers → Python → Copy connection string
-5. Replace `<password>` in the connection string with your DB user password
-6. Add `MONGODB_URI` and `JWT_SECRET_KEY` to Railway environment variables
-
-#### Generate JWT_SECRET_KEY:
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
-
-### Frontend (`projects/frontend/.env`) — CREATED:
-```
-VITE_BACKEND_URL=http://localhost:8000
-```
-
-### Contracts (`projects/contracts/.env.testnet`) — CREATED, needs DISPENSER_MNEMONIC:
-```
-ALGOD_SERVER=https://testnet-api.algonode.cloud
-DEPLOYER_MNEMONIC=birth heart ... medal
-DISPENSER_MNEMONIC=birth heart ... medal  ← same mnemonic for TestNet
-```
-
----
-
-## Puya Compiler Rules (CRITICAL — learned from build errors)
-
-These are Puya-specific constraints that differ from standard Python:
-
-1. **No `_` variable name** — use a real name or index access
-2. **No tuple unpacking for ARC-4 mutable refs** — `BoxMap.maybe()` returns a tuple with an ARC-4 ref; you CANNOT unpack or assign it to a variable
-3. **Use `key in boxmap`** — for existence checks instead of `.maybe()[1]`
-4. **Use `boxmap[key]` directly** — for reading fields: `self.registry[phash].flag_count`
+1. **No `_` variable name** — use real names
+2. **No tuple unpacking for ARC-4 mutable refs** — `BoxMap.maybe()` returns a ref; cannot unpack
+3. **Use `key in boxmap`** — for existence checks
+4. **Use `boxmap[key]` directly** — to read fields
 5. **Use `boxmap[key].field = value`** — for in-place field updates
-6. **Always `.copy()` ARC-4 values** — when returning: `self.registry[phash].copy()`
-7. **`op.Box.put()` not `op.box_put()`** — box opcodes are under the `op.Box` class
+6. **Always `.copy()`** — when returning ARC-4 values: `self.registry[phash].copy()`
+7. **`op.Box.put()` not `op.box_put()`**
 8. **`op.Box.get()` not `op.box_get()`** — returns `tuple[Bytes, bool]`
 
-### Correct Puya Patterns for BoxMap with ARC-4 Structs
-
-```python
-# CHECK EXISTENCE:
-assert phash in self.registry, "Not found"
-# or:
-if phash not in self.registry:
-    return arc4.Bool(False), empty_record
-
-# READ FULL RECORD (returns a copy):
-record = self.registry[phash].copy()
-
-# READ ONE FIELD:
-count = self.registry[phash].flag_count.native
-
-# UPDATE ONE FIELD IN-PLACE:
-self.registry[phash].flag_count = arc4.UInt64(new_value)
-
-# WRITE NEW RECORD:
-self.registry[phash] = ContentRecord(
-    creator_name=creator_name,
-    creator_address=arc4.Address(Txn.sender),
-    ...
-)
-
-# RAW BOX OPERATIONS (for non-BoxMap boxes like flags):
-op.Box.put(key_bytes, value_bytes)
-data, exists = op.Box.get(key_bytes)
-```
-
 ---
 
-## ABI Method Signatures (for algosdk in backend)
+## ABI Method Signatures (for algosdk)
 
-```
-register_content(string,string,string,pay)uint64
-verify_content(string)(bool,(string,address,string,uint64,uint64,uint64))
-flag_misuse(string,string,pay)uint64
-get_flag(string,uint64)string
+```python
+REGISTER_METHOD = abi.Method.from_signature(
+    "register_content(string,string,string,string,string,pay)uint64"
+)
+VERIFY_METHOD = abi.Method.from_signature(
+    "verify_content(string)(bool,(string,address,string,uint64,uint64,uint64,string,string))"
+)
+FLAG_METHOD = abi.Method.from_signature(
+    "flag_misuse(string,string,pay)uint64"
+)
+GET_FLAG_METHOD = abi.Method.from_signature(
+    "get_flag(string,uint64)string"
+)
 ```
 
 ---
@@ -338,135 +261,9 @@ get_flag(string,uint64)string
 ## Deployer Account
 
 - **Address:** K3SFBBGKSEWGDW3Q4KAPKTI33ING3HLND5YSJVJH467MHA5K72FKCTXRDQ
-- **Balance:** 10.0 TestNet ALGO
 - **Network:** Algorand TestNet via AlgoNode
-
----
-
-## What is App ID?
-
-Think of it like a **phone number for the smart contract**.
-
-- You write `contract.py` → deploy it → Algorand assigns a permanent number e.g. `755794932`
-- The backend uses `ALGORAND_APP_ID=755794932` to know WHICH contract to call
-- Without it → backend crashes with "ALGORAND_APP_ID not set"
-- The contract itself lives on-chain forever after deploy — it never goes down
-
----
-
-## Full Online Deployment Plan
-
-### Phase 1 — Deploy Smart Contract (get App ID)
-
-```bash
-# Fix .env.testnet — mnemonic must be on ONE line, no line breaks
-# Then:
-cd projects/contracts
-algokit project deploy testnet
-# Output: "Deployed app GenMark, App ID: <NUMBER>"
-# Copy that number → put in projects/backend/.env as ALGORAND_APP_ID=<NUMBER>
-```
-
-### Phase 2 — Deploy Backend Online (Railway + Docker — Free)
-
-Railway detects your Dockerfile automatically and builds + runs it.
-
-1. Go to `railway.app` → Sign up with GitHub
-2. New Project → Deploy from GitHub repo → select your repo
-3. Railway asks which folder → set **Root Directory: `projects/backend`**
-4. Railway detects `Dockerfile` automatically — no extra config needed
-5. Go to **Variables** tab → add every variable below (copy-paste exact names):
-
-   | Variable | Value |
-   |----------|-------|
-   | `ALGORAND_ALGOD_SERVER` | `https://testnet-api.algonode.cloud` |
-   | `ALGORAND_ALGOD_TOKEN` | `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` |
-   | `ALGORAND_APP_ID` | `<your App ID from Phase 1>` |
-   | `DEPLOYER_MNEMONIC` | `<your 25-word mnemonic — all on one line>` |
-   | `FRONTEND_URL` | `https://your-vercel-url.vercel.app` (fill after Phase 3) |
-
-6. Railway builds the Docker image and starts it → you get a URL like:
-   `https://genmark-backend-production.up.railway.app`
-7. Test it: open `https://genmark-backend-production.up.railway.app/health` in browser
-   → should show `{"status":"healthy","app_id_configured":true}`
-
-### Phase 3 — Deploy Frontend Online (Railway + Docker OR Vercel — Free)
-
-**Option A: Vercel (simpler — recommended for frontend)**
-1. Go to `vercel.com` → Sign up with GitHub → Add New Project → import your repo
-2. Configure:
-   - Root Directory: `projects/frontend`
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-3. Add Environment Variable: `VITE_BACKEND_URL` = `https://genmark-backend.railway.app`
-4. Deploy → get URL like `https://genmark.vercel.app`
-
-**Option B: Railway + Docker (same platform as backend)**
-1. On Railway → New Service in same project → GitHub repo
-2. Root Directory: `projects/frontend`
-3. Railway detects `Dockerfile` automatically
-4. Variables → add: `VITE_BACKEND_URL` = `https://genmark-backend.railway.app`
-   ⚠ This is a BUILD ARG — Railway will pass it during image build (Vite bakes it in)
-5. Deploy → get URL like `https://genmark-frontend.railway.app`
-
-### Phase 4 — Connect and Verify
-
-1. Back in Railway backend service → Variables → update:
-   `FRONTEND_URL` = `https://genmark.vercel.app` (or your Railway frontend URL)
-2. Redeploy backend
-3. Open your frontend URL → Generate → type prompt → Create Image
-   → green "Content Certified ✓" badge = blockchain working
-4. Save image → Verify → Upload → green "Verified Original" card
-
-### Cost
-
-| Service | Cost |
-|---------|------|
-| Algorand TestNet | Free (fake ALGO) |
-| Railway (backend Docker) | Free: $5 credit/month — enough for hackathon |
-| Vercel (frontend) | Free forever |
-| AlgoNode (blockchain API) | Free forever |
-
-**Total: $0**
-
----
-
-## Docker Files (created)
-
-| File | Purpose |
-|------|---------|
-| `projects/backend/Dockerfile` | Python 3.12 + FastAPI + Pillow deps |
-| `projects/backend/.dockerignore` | Excludes venv, .env, __pycache__ |
-| `projects/frontend/Dockerfile` | Multi-stage: Node 20 build → nginx serve |
-| `projects/frontend/.dockerignore` | Excludes node_modules, dist, .env |
-| `projects/frontend/nginx.conf` | nginx config with React Router support |
-| `docker-compose.yml` | Local development — runs both services |
-
-## Local Docker Development
-
-```bash
-# From project root — builds and starts both backend + frontend
-docker compose up --build
-
-# Then open:
-#   Frontend: http://localhost:5173
-#   Backend:  http://localhost:8000
-#   API docs: http://localhost:8000/docs
-
-# Stop everything
-docker compose down
-```
-
-⚠ Before running locally: `projects/backend/.env` must exist with `ALGORAND_APP_ID` set.
-
----
-
-## Remaining TODO
-
-1. Create MongoDB Atlas free cluster → get connection string
-2. Add `MONGODB_URI` + `JWT_SECRET_KEY` to Railway environment variables
-3. Push all changes to GitHub → Railway + Vercel auto-redeploy
-4. Test: visit `/login` → signup → generate image → verify → download certificate
+- **Faucet:** https://bank.testnet.algorand.network/ (paste address, click dispense)
+- **Note:** Each registration costs 300,000 μALGO. Refill when balance drops below 1 ALGO.
 
 ---
 
@@ -489,7 +286,40 @@ docker compose down
 
 ### Route Protection (`projects/frontend/src/App.tsx`)
 - `ProtectedRoute` — wraps `/generate`; redirects to `/login` if no localStorage token
-- `/verify` — public, no auth required
+- `/morph`, `/verify` — public, no auth required
+
+---
+
+## Email Notification (`projects/backend/notifications.py`)
+
+When misuse is flagged:
+1. Backend looks up `creator_email` from MongoDB `registrations` collection
+2. Sends email via Resend API (if `RESEND_API_KEY` is set)
+3. Email contains: phash, misuse description, blockchain tx_id
+
+MongoDB stores only `{phash, creator_name, creator_email}` — provenance data lives on-chain only.
+
+---
+
+## Deployment
+
+### Railway (Backend)
+1. New Project → GitHub repo → Root Directory: `projects/backend`
+2. Variables:
+   - `ALGORAND_APP_ID=755880383`
+   - `DEPLOYER_MNEMONIC=<25 words on one line>`
+   - `ALGORAND_ALGOD_SERVER=https://testnet-api.algonode.cloud`
+   - `ALGORAND_ALGOD_TOKEN=aaaa...aaaa`
+   - `MONGODB_URI=<MongoDB Atlas connection string>`
+   - `JWT_SECRET_KEY=<32+ char secret>`
+   - `FRONTEND_URL=<Vercel URL>`
+   - `RESEND_API_KEY=<optional>`
+3. Health check: `https://<railway-url>/health`
+
+### Vercel (Frontend)
+1. Import repo → Root Directory: `projects/frontend`
+2. Variables: `VITE_BACKEND_URL=<Railway backend URL>`
+3. Deploy → get live URL → update `FRONTEND_URL` in Railway
 
 ---
 
@@ -498,26 +328,19 @@ docker compose down
 | What | Where |
 |------|-------|
 | GenMark contract | `projects/contracts/smart_contracts/genmark/contract.py` |
-| Deploy config | `projects/contracts/smart_contracts/genmark/deploy_config.py` |
-| Contract tests | `projects/contracts/tests/genmark_test.py` |
 | Backend main | `projects/backend/main.py` |
 | Auth helpers | `projects/backend/auth.py` |
 | pHash logic | `projects/backend/hashing.py` |
-| Algorand calls | `projects/backend/algorand.py` |
+| Algorand calls (with retry) | `projects/backend/algorand.py` |
 | PDF certificates | `projects/backend/certificate.py` |
-| Backend env | `projects/backend/.env` |
-| Backend env template | `projects/backend/.env.example` |
-| Contracts env | `projects/contracts/.env.testnet` |
+| Email notifications | `projects/backend/notifications.py` |
 | Login page | `projects/frontend/src/pages/Login.tsx` |
 | Generate page | `projects/frontend/src/pages/Generate.tsx` |
+| Morph page | `projects/frontend/src/pages/Morph.tsx` |
 | Verify page | `projects/frontend/src/pages/Verify.tsx` |
+| Result display | `projects/frontend/src/components/ResultCard.tsx` |
 | Auth hook | `projects/frontend/src/hooks/useAuth.ts` |
-| ResultCard component | `projects/frontend/src/components/ResultCard.tsx` |
-| StampBadge component | `projects/frontend/src/components/StampBadge.tsx` |
 | Frontend routing | `projects/frontend/src/App.tsx` |
-| Frontend env | `projects/frontend/.env` |
-| Vercel config | `projects/frontend/vercel.json` |
-| Full plan | `plan.md` |
 
 ---
 
@@ -530,37 +353,25 @@ docker compose down
 | AlgoKit CLI | https://github.com/algorandfoundation/algokit-cli |
 | algosdk Python SDK | https://py-algorand-sdk.readthedocs.io/ |
 | ARC-4 spec | https://arc.algorand.foundation/ARCs/arc-0004 |
-| Box Storage guide | https://developer.algorand.org/docs/get-details/dapps/smart-contracts/apps/state/#box-storage |
 
-## Image Signature — How pHash Works
+---
 
-We use **Perceptual Hashing (pHash)** — not SHA-256.
+## Image Fingerprinting — How pHash Works
 
-**Library:** `ImageHash 4.3.1` + `Pillow 11.1.0`
-**File:** `projects/backend/hashing.py`
+**Library:** `ImageHash 4.3.1` + `Pillow 11.1.0` — `projects/backend/hashing.py`
 
-### Pipeline
-1. Raw image bytes arrive (upload or URL fetch)
-2. `PIL.Image.open()` decodes any format (JPEG, PNG, WebP, GIF…)
-3. Converted to RGB to normalise all formats
-4. `imagehash.phash(img, hash_size=8)` runs:
-   - Resize to 32×32 pixels
-   - Apply DCT (Discrete Cosine Transform) on pixel values
-   - Take top-left 8×8 DCT coefficients block (64 values)
-   - Compare each to the median → 1 if above, 0 if below
-   - Pack 64 bits → **16-char lowercase hex string** e.g. `cdcd3a32664c4d1b`
-5. That hex string is stored on-chain as the content fingerprint
+1. Raw bytes → `PIL.Image.open()` (any format: JPEG, PNG, WebP, GIF…)
+2. Convert to RGB
+3. `imagehash.phash(img, hash_size=8)`:
+   - Resize to 32×32
+   - DCT (Discrete Cosine Transform)
+   - Top-left 8×8 block → compare each of 64 values to median
+   - Pack 64 bits → **16-char lowercase hex** e.g. `cdcd3a32664c4d1b`
 
-### Why Not SHA-256?
-SHA-256 changes completely if you re-save, resize, or compress even 1 pixel.
-pHash stays the same (Hamming distance < 4) even after:
-- JPEG re-compression
-- Resize / downscale
-- Minor crop
-- Format conversion (PNG → JPEG)
-
-**Hamming distance threshold used: 4 bits**
-0 = exact match | 1–4 = same image (minor edit) | >15 = different image
+**Hamming distance threshold: 4 bits**
+- 0 = exact match / pHash collision (morph too subtle — block registration)
+- 1–4 = same image with minor edit (verify as same content)
+- >15 = different image
 
 ## Current Date
-Today: 2026-02-20
+Today: 2026-02-21
