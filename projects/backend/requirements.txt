@@ -31,4 +31,4 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.1.3
 
 # Email notifications
-resend==2.5.0
+resend>=2.5.1
